@@ -1,0 +1,5 @@
+streamlit
+nest_asyncio
+langchain_groq
+sqlite3
+sqlite3-binary
