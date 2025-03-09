@@ -1,5 +1,3 @@
-streamlit
-nest_asyncio
-langchain_groq
-sqlite3
-sqlite3-binary
+streamlit==1.43.1
+nest_asyncio==1.6.0
+langchain_groq==0.2.5
