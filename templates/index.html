@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>MCQ Generator</title>
+  <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.0/css/bootstrap.min.css">
+  <style>
+    body {
+      background: linear-gradient(to right, #74ABE2, #5563DE);
+      color: #fff;
+    }
+    .container {
+      margin-top: 50px;
+    }
+    .card {
+      background-color: rgba(255, 255, 255, 0.9);
+      color: #333;
+      padding: 20px;
+      border-radius: 8px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1 class="text-center">MCQ Generator</h1>
+    <div class="card">
+      <form action="/generate" method="post" enctype="multipart/form-data">
+        <div class="form-group">
+          <label for="file">Upload File (PDF, DOCX, or TXT):</label>
+          <input type="file" class="form-control-file" id="file" name="file" required>
+        </div>
+        <div class="form-group">
+          <label for="num_questions">Number of Questions:</label>
+          <input type="number" class="form-control" id="num_questions" name="num_questions" value="5" min="1" max="20" required>
+        </div>
+        <button type="submit" class="btn btn-primary btn-block">Generate MCQs</button>
+      </form>
+    </div>
+  </div>
+</body>
+</html>
