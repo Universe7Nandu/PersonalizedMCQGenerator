@@ -13,4 +13,4 @@ plotly
 sympy
 numpy
 sentence-transformers
-PdfReader
+pypdf
