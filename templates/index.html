@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>MCQ Generator</title>
+  <title>MCQ Results</title>
   <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.0/css/bootstrap.min.css">
   <style>
     body {
@@ -18,23 +18,26 @@
       padding: 20px;
       border-radius: 8px;
     }
+    pre {
+      background-color: #f8f9fa;
+      color: #333;
+      padding: 15px;
+      border-radius: 5px;
+      white-space: pre-wrap; /* allow line-wrapping */
+    }
   </style>
 </head>
 <body>
   <div class="container">
-    <h1 class="text-center">MCQ Generator</h1>
+    <h1 class="text-center">Generated MCQs</h1>
     <div class="card">
-      <form action="/generate" method="post" enctype="multipart/form-data">
-        <div class="form-group">
-          <label for="file">Upload File (PDF, DOCX, or TXT):</label>
-          <input type="file" class="form-control-file" id="file" name="file" required>
-        </div>
-        <div class="form-group">
-          <label for="num_questions">Number of Questions:</label>
-          <input type="number" class="form-control" id="num_questions" name="num_questions" value="5" min="1" max="20" required>
-        </div>
-        <button type="submit" class="btn btn-primary btn-block">Generate MCQs</button>
-      </form>
+      <h3>Your MCQs:</h3>
+      <pre>{{ mcqs }}</pre>
+      <hr>
+      <a href="/download/{{ txt_filename }}" class="btn btn-success">Download TXT</a>
+      <a href="/download/{{ pdf_filename }}" class="btn btn-danger">Download PDF</a>
+      <hr>
+      <a href="/" class="btn btn-primary">Generate Another</a>
     </div>
   </div>
 </body>
