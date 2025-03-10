@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>MCQ Generation Results</title>
+  <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.0/css/bootstrap.min.css">
+  <style>
+    body {
+      background: linear-gradient(to right, #74ABE2, #5563DE);
+      color: #fff;
+    }
+    .container {
+      margin-top: 50px;
+    }
+    .card {
+      background-color: rgba(255, 255, 255, 0.9);
+      color: #333;
+      padding: 20px;
+      border-radius: 8px;
+    }
+    pre {
+      background-color: #f8f9fa;
+      padding: 15px;
+      border-radius: 5px;
+      color: #333;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1 class="text-center">Generated MCQs</h1>
+    <div class="card">
+      <h3>MCQs:</h3>
+      <pre>{{ mcqs }}</pre>
+      <hr>
+      <a href="/download/{{ txt_filename }}" class="btn btn-success">Download as TXT</a>
+      <a href="/download/{{ pdf_filename }}" class="btn btn-danger">Download as PDF</a>
+      <br><br>
+      <a href="/" class="btn btn-primary">Generate Another</a>
+    </div>
+  </div>
+</body>
+</html>
