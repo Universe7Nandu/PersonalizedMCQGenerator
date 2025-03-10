@@ -1,153 +1,100 @@
-import os
-import asyncio
-import nest_asyncio
 import streamlit as st
 import pdfplumber
 import docx
-from io import BytesIO
+import os
+import random
 from fpdf import FPDF
-from langchain_groq import ChatGroq
+from langchain.llms import HuggingFaceHub
 
-# Allow asyncio to run in Streamlit
-nest_asyncio.apply()
+# Set up LLM model (Groq API or Hugging Face)
+API_KEY = "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"
+llm = HuggingFaceHub(repo_id="tiiuae/falcon-7b-instruct", huggingfacehub_api_token=API_KEY)
 
-# ------------------------------
-# Configuration & Setup
-# ------------------------------
-st.set_page_config(page_title="MCQ Generator from Document", layout="centered")
+# Function to extract text from different file formats
+def extract_text(file):
+    if file.type == "application/pdf":
+        with pdfplumber.open(file) as pdf:
+            return "\n".join(page.extract_text() for page in pdf.pages if page.extract_text())
+    elif file.type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+        doc = docx.Document(file)
+        return "\n".join(para.text for para in doc.paragraphs)
+    elif file.type == "text/plain":
+        return file.read().decode("utf-8")
+    return None
 
-# Set your Groq API key (hardcoded as requested)
-GROQ_API_KEY = os.getenv("GROQ_API_KEY", "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")
-
-# ------------------------------
-# Utility Functions
-# ------------------------------
-def allowed_file(filename):
-    allowed_extensions = ["pdf", "docx", "txt"]
-    return '.' in filename and filename.rsplit('.', 1)[1].lower() in allowed_extensions
-
-def extract_text(file_obj, filename):
-    ext = filename.rsplit('.', 1)[1].lower()
-    if ext == "pdf":
-        try:
-            pdf = pdfplumber.open(file_obj)
-            text = ""
-            for page in pdf.pages:
-                text += page.extract_text() or ""
-            pdf.close()
-            return text
-        except Exception as e:
-            st.error(f"Error extracting PDF: {e}")
-            return ""
-    elif ext == "docx":
-        try:
-            doc = docx.Document(file_obj)
-            text = " ".join([para.text for para in doc.paragraphs])
-            return text
-        except Exception as e:
-            st.error(f"Error extracting DOCX: {e}")
-            return ""
-    elif ext == "txt":
-        try:
-            return file_obj.read().decode("utf-8", errors="ignore")
-        except Exception as e:
-            st.error(f"Error reading TXT file: {e}")
-            return ""
-    else:
-        return ""
-
-async def async_generate_mcqs(input_text, num_questions, difficulty, include_summary):
-    """
-    Build a prompt using the extracted text.
-    Optionally include a summary request.
-    """
-    summary_part = ""
-    if include_summary:
-        summary_part = "Also provide a short summary of the text labeled 'SUMMARY:' on its own line.\n"
+# Function to generate MCQs using LLM
+def generate_mcqs(text, num_questions, difficulty):
     prompt = f"""
-You are an AI assistant that generates multiple-choice questions (MCQs) from the following text:
-"{input_text}"
-Difficulty: {difficulty}
-Number of Questions: {num_questions}
-{summary_part}
-Please generate exactly {num_questions} MCQs from the text. Each question should include:
-- A clear question.
-- Four answer options labeled A, B, C, D.
-- The correct answer clearly indicated.
-
-Format:
-## MCQ
-Question: [question text]
-A) [option A]
-B) [option B]
-C) [option C]
-D) [option D]
-Correct Answer: [correct option]
+    Generate {num_questions} multiple-choice questions (MCQs) from the following text.
+    Difficulty Level: {difficulty}.
+    Each question should have:
+    - A question statement
+    - Four answer options (A, B, C, D)
+    - The correct answer indicated
+    Format:
+    {{
+        "questions": [
+            {{
+                "question": "What is...",
+                "options": ["A) ...", "B) ...", "C) ...", "D) ..."],
+                "correct": "B"
+            }}
+        ]
+    }}
+    
+    Text:
+    {text[:2000]}  # Limiting text to 2000 chars for processing
     """
-    llm = ChatGroq(
-        temperature=0.7,
-        groq_api_key=GROQ_API_KEY,
-        model_name="mixtral-8x7b-32768"
-    )
-    messages = [{"role": "user", "content": prompt}]
-    response = await llm.ainvoke(messages)
-    return response.content.strip()
+    response = llm(prompt)
+    return eval(response)  # Convert string response to dictionary
 
-def generate_mcqs(input_text, num_questions, difficulty, include_summary):
-    """Run the async generation function in a blocking way."""
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    mcqs = loop.run_until_complete(async_generate_mcqs(input_text, num_questions, difficulty, include_summary))
-    loop.close()
-    return mcqs
-
-def create_pdf(text):
-    """
-    Generate a PDF from the given text.
-    This function uses dest="S" to return the PDF as a string, which is then encoded.
-    """
+# Function to create a PDF report
+def create_pdf(questions, responses):
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("Arial", size=12)
-    for line in text.split("\n"):
-        pdf.multi_cell(0, 10, line)
-    # Use dest="S" to get the PDF as a string, then encode to bytes.
-    pdf_output = pdf.output(dest="S").encode("latin1")
-    return pdf_output
+    pdf.cell(200, 10, txt="MCQ Test Results", ln=True, align='C')
+    for i, (q, ans) in enumerate(zip(questions, responses)):
+        pdf.multi_cell(0, 10, f"Q{i+1}: {q['question']}")
+        for option in q['options']:
+            pdf.multi_cell(0, 10, option)
+        pdf.multi_cell(0, 10, f"Your Answer: {ans} | Correct Answer: {q['correct']}\n")
+    pdf_path = "mcq_results.pdf"
+    pdf.output(pdf_path)
+    return pdf_path
 
-# ------------------------------
-# Streamlit App UI
-# ------------------------------
-st.title("MCQ Generator from Document")
-st.write("Upload a PDF, DOCX, or TXT file to generate multiple-choice questions (MCQs).")
+# Streamlit UI
+st.title("📚 AI-Powered MCQ Generator & Test")
 
-uploaded_file = st.file_uploader("Choose a file", type=["pdf", "docx", "txt"])
+uploaded_file = st.file_uploader("Upload a document (PDF, DOCX, TXT)", type=["pdf", "docx", "txt"])
+difficulty = st.selectbox("Select Difficulty Level", ["Easy", "Medium", "Hard"])
+num_questions = st.slider("Number of MCQs", min_value=1, max_value=20, value=5)
 
-if uploaded_file is not None:
-    if allowed_file(uploaded_file.name):
-        # Read file content into BytesIO for multiple reads
-        file_bytes = uploaded_file.read()
-        file_obj = BytesIO(file_bytes)
-        text = extract_text(file_obj, uploaded_file.name)
+if st.button("Generate MCQs") and uploaded_file:
+    with st.spinner("Processing document..."):
+        text = extract_text(uploaded_file)
         if text:
-            st.success("File processed successfully!")
-            st.write("Extracted text preview (first 500 characters):")
-            st.write(text[:500] + "...")
-            
-            num_questions = st.number_input("Number of MCQs:", min_value=1, max_value=20, value=5)
-            difficulty = st.selectbox("Select Difficulty:", ["Easy", "Medium", "Hard"])
-            include_summary = st.checkbox("Include a short summary")
-            
-            if st.button("Generate MCQs"):
-                with st.spinner("Generating MCQs..."):
-                    output_text = generate_mcqs(text, num_questions, difficulty, include_summary)
-                st.subheader("Generated Content")
-                st.text_area("Output", output_text, height=300)
-                
-                st.download_button("Download as TXT", output_text, file_name="mcqs.txt", mime="text/plain")
-                pdf_bytes = create_pdf(output_text)
-                st.download_button("Download as PDF", pdf_bytes, file_name="mcqs.pdf", mime="application/pdf")
-        else:
-            st.error("Could not extract text from the file.")
-    else:
-        st.error("Invalid file format. Please upload a PDF, DOCX, or TXT file.")
+            mcq_data = generate_mcqs(text, num_questions, difficulty)
+            st.session_state["mcqs"] = mcq_data["questions"]
+            st.session_state["current_q"] = 0
+            st.session_state["responses"] = []
+            st.success("MCQs Generated! Start the test below.")
+
+if "mcqs" in st.session_state and st.session_state["current_q"] < len(st.session_state["mcqs"]):
+    q_index = st.session_state["current_q"]
+    question_data = st.session_state["mcqs"][q_index]
+    st.subheader(f"Q{q_index + 1}: {question_data['question']}")
+    user_answer = st.radio("Select an answer:", question_data['options'])
+
+    if st.button("Submit Answer"):
+        st.session_state["responses"].append(user_answer[0])
+        st.session_state["current_q"] += 1
+        st.experimental_rerun()
+
+if "mcqs" in st.session_state and st.session_state["current_q"] == len(st.session_state["mcqs"]):
+    st.success("Test Completed! Here are your results:")
+    score = sum(1 for i in range(len(st.session_state["mcqs"])) if st.session_state["responses"][i] == st.session_state["mcqs"][i]['correct'])
+    st.write(f"Your Score: {score}/{len(st.session_state['mcqs'])}")
+    pdf_path = create_pdf(st.session_state["mcqs"], st.session_state["responses"])
+    st.download_button("Download Results as PDF", pdf_path)
+    st.session_state.clear()
