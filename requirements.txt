@@ -14,3 +14,7 @@ sympy
 numpy
 sentence-transformers
 pypdf
+Flask
+pdfplumber
+fpdf
+
