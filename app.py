@@ -1,93 +1,91 @@
 import os
 import asyncio
 import nest_asyncio
-from flask import Flask, render_template, request, send_file
+import streamlit as st
 import pdfplumber
 import docx
-from werkzeug.utils import secure_filename
+from io import BytesIO
 from fpdf import FPDF
 from langchain_groq import ChatGroq
 
-###############################################################################
-# ALLOW ASYNCIO IN FLASK
-###############################################################################
+# Allow asyncio to run in Streamlit
 nest_asyncio.apply()
 
-###############################################################################
-# CONFIGURATION
-###############################################################################
-# Hardcode your Groq API key here (not recommended for production).
-os.environ["GROQ_API_KEY"] = "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"
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+# ------------------------------
+# Configuration & Setup
+# ------------------------------
+st.set_page_config(page_title="MCQ Generator from Document", layout="centered")
 
-app = Flask(__name__)
-app.config['UPLOAD_FOLDER'] = 'uploads/'
-app.config['RESULTS_FOLDER'] = 'results/'
-app.config['ALLOWED_EXTENSIONS'] = {'pdf', 'docx', 'txt'}
+# Set your Groq API key (hardcoded as requested)
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "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")
 
-# Ensure folders exist
-os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
-os.makedirs(app.config['RESULTS_FOLDER'], exist_ok=True)
-
-###############################################################################
-# UTILITY FUNCTIONS
-###############################################################################
+# ------------------------------
+# Utility Functions
+# ------------------------------
 def allowed_file(filename):
-    """Check if the file extension is allowed."""
-    return '.' in filename and filename.rsplit('.', 1)[1].lower() in app.config['ALLOWED_EXTENSIONS']
+    allowed_extensions = ["pdf", "docx", "txt"]
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in allowed_extensions
 
-def extract_text_from_file(file_path):
-    """Extract text from PDF, DOCX, or TXT."""
-    ext = file_path.rsplit('.', 1)[1].lower()
-    if ext == 'pdf':
-        with pdfplumber.open(file_path) as pdf:
-            text = ''.join((page.extract_text() or "") for page in pdf.pages)
-        return text
-    elif ext == 'docx':
-        doc = docx.Document(file_path)
-        text = ' '.join(para.text for para in doc.paragraphs)
-        return text
-    elif ext == 'txt':
-        with open(file_path, 'r', encoding='utf-8') as f:
-            return f.read()
-    return None
+def extract_text(file_obj, filename):
+    ext = filename.rsplit('.', 1)[1].lower()
+    if ext == "pdf":
+        try:
+            pdf = pdfplumber.open(file_obj)
+            text = ""
+            for page in pdf.pages:
+                text += page.extract_text() or ""
+            pdf.close()
+            return text
+        except Exception as e:
+            st.error(f"Error extracting PDF: {e}")
+            return ""
+    elif ext == "docx":
+        try:
+            doc = docx.Document(file_obj)
+            text = " ".join([para.text for para in doc.paragraphs])
+            return text
+        except Exception as e:
+            st.error(f"Error extracting DOCX: {e}")
+            return ""
+    elif ext == "txt":
+        try:
+            return file_obj.read().decode("utf-8", errors="ignore")
+        except Exception as e:
+            st.error(f"Error reading TXT file: {e}")
+            return ""
+    else:
+        return ""
 
-async def async_generate_content(input_text, num_questions, difficulty, include_summary):
+async def async_generate_mcqs(input_text, num_questions, difficulty, include_summary):
     """
-    Build a prompt by inserting the extracted text (input_text) into the prompt.
-    We also factor in the difficulty and an optional summary request.
+    Build a prompt that uses the extracted text. It includes:
+      - The selected difficulty
+      - The requested number of MCQs
+      - Optionally, a short summary
     """
-    base_prompt = f"""
-You are an AI assistant helping the user generate multiple-choice questions (MCQs) based on the following text:
-\"{input_text}\"
-
-Difficulty: {difficulty}
-Number of MCQs: {num_questions}
-"""
-
     summary_part = ""
     if include_summary:
-        summary_part = "Additionally, produce a short summary of the text labeled 'SUMMARY:' on its own line.\n"
-
-    mcq_instructions = f"""
+        summary_part = "Also provide a short summary of the text labeled 'SUMMARY:' on its own line.\n"
+    prompt = f"""
+You are an AI assistant that generates multiple-choice questions (MCQs) from the following text:
+"{input_text}"
+Difficulty: {difficulty}
+Number of Questions: {num_questions}
+{summary_part}
 Please generate exactly {num_questions} MCQs from the text. Each question should include:
-- A clear question
-- Four answer options labeled A, B, C, D
-- The correct answer clearly indicated
+- A clear question.
+- Four answer options labeled A, B, C, D.
+- The correct answer clearly indicated.
 
 Format:
 ## MCQ
-Question: [question]
+Question: [question text]
 A) [option A]
 B) [option B]
 C) [option C]
 D) [option D]
 Correct Answer: [correct option]
-"""
-
-    # Combine into one final prompt
-    prompt = base_prompt + summary_part + mcq_instructions
-
+    """
     llm = ChatGroq(
         temperature=0.7,
         groq_api_key=GROQ_API_KEY,
@@ -97,100 +95,59 @@ Correct Answer: [correct option]
     response = await llm.ainvoke(messages)
     return response.content.strip()
 
-def generate_content(input_text, num_questions, difficulty, include_summary):
-    """Run the async function in a blocking way."""
+def generate_mcqs(input_text, num_questions, difficulty, include_summary):
+    """Run the asynchronous generation function in a blocking way."""
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-    result_text = loop.run_until_complete(async_generate_content(input_text, num_questions, difficulty, include_summary))
+    mcqs = loop.run_until_complete(async_generate_mcqs(input_text, num_questions, difficulty, include_summary))
     loop.close()
-    return result_text
+    return mcqs
 
-def save_text_file(content, filename):
-    path = os.path.join(app.config['RESULTS_FOLDER'], filename)
-    with open(path, 'w', encoding='utf-8') as f:
-        f.write(content)
-    return path
-
-def create_pdf_file(content, filename):
-    """
-    Create a PDF file from the entire content. This may include a 'SUMMARY:' line
-    plus multiple MCQs separated by '## MCQ'.
-    """
+def create_pdf(text):
+    """Generate a PDF from the given text and return its bytes."""
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("Arial", size=12)
-
-    # We'll just place the entire text in the PDF, line by line.
-    for line in content.split('\n'):
+    # Write each line in the PDF
+    for line in text.split("\n"):
         pdf.multi_cell(0, 10, line)
-    pdf_path = os.path.join(app.config['RESULTS_FOLDER'], filename)
-    pdf.output(pdf_path)
-    return pdf_path
+    output = BytesIO()
+    pdf.output(output)
+    return output.getvalue()
 
-###############################################################################
-# FLASK ROUTES
-###############################################################################
-@app.route('/')
-def index():
-    """Render the main page (upload form)."""
-    return render_template('index.html')
+# ------------------------------
+# Streamlit App UI
+# ------------------------------
+st.title("MCQ Generator from Document")
+st.write("Upload a PDF, DOCX, or TXT file to generate multiple-choice questions (MCQs).")
 
-@app.route('/generate', methods=['POST'])
-def generate():
-    """Handle file upload and MCQ generation."""
-    if 'file' not in request.files:
-        return "No file part", 400
+uploaded_file = st.file_uploader("Choose a file", type=["pdf", "docx", "txt"])
 
-    file = request.files['file']
-    if file and allowed_file(file.filename):
-        filename = secure_filename(file.filename)
-        file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-        file.save(file_path)
-
-        # Extract text
-        text = extract_text_from_file(file_path)
+if uploaded_file is not None:
+    if allowed_file(uploaded_file.name):
+        # Read file content into BytesIO for multiple reads
+        file_bytes = uploaded_file.read()
+        file_obj = BytesIO(file_bytes)
+        text = extract_text(file_obj, uploaded_file.name)
         if text:
-            # Number of MCQs
-            num_questions = request.form.get('num_questions', '5')
-            try:
-                num_questions = int(num_questions)
-            except ValueError:
-                num_questions = 5
-
-            # Difficulty
-            difficulty = request.form.get('difficulty', 'Medium')
-
-            # Summary?
-            include_summary = bool(request.form.get('include_summary', False))
-
-            # Generate the combined content
-            output = generate_content(text, num_questions, difficulty, include_summary)
-
-            # Save as TXT and PDF
-            base_name = filename.rsplit('.', 1)[0]
-            txt_filename = f"generated_content_{base_name}.txt"
-            pdf_filename = f"generated_content_{base_name}.pdf"
-            save_text_file(output, txt_filename)
-            create_pdf_file(output, pdf_filename)
-
-            # Render results
-            return render_template('results.html',
-                                   content=output,
-                                   txt_filename=txt_filename,
-                                   pdf_filename=pdf_filename)
-    return "Invalid file format or no file uploaded", 400
-
-@app.route('/download/<filename>')
-def download_file(filename):
-    """Serve the generated file for download."""
-    file_path = os.path.join(app.config['RESULTS_FOLDER'], filename)
-    if os.path.exists(file_path):
-        return send_file(file_path, as_attachment=True)
-    return "File not found", 404
-
-###############################################################################
-# MAIN
-###############################################################################
-if __name__ == '__main__':
-    # Some environments disallow the reloader due to signal usage
-    app.run(debug=True, use_reloader=False)
+            st.success("File processed successfully!")
+            st.write("Extracted text preview (first 500 characters):")
+            st.write(text[:500] + "...")
+            
+            num_questions = st.number_input("Number of MCQs:", min_value=1, max_value=20, value=5)
+            difficulty = st.selectbox("Select Difficulty:", ["Easy", "Medium", "Hard"])
+            include_summary = st.checkbox("Include a short summary")
+            
+            if st.button("Generate MCQs"):
+                with st.spinner("Generating MCQs..."):
+                    output_text = generate_mcqs(text, num_questions, difficulty, include_summary)
+                st.subheader("Generated Content")
+                st.text_area("Output", output_text, height=300)
+                
+                st.download_button("Download as TXT", output_text, file_name="mcqs.txt", mime="text/plain")
+                pdf_bytes = create_pdf(output_text)
+                st.download_button("Download as PDF", pdf_bytes, file_name="mcqs.pdf", mime="application/pdf")
+        else:
+            st.error("Could not extract text from the file.")
+    else:
+        st.error("Invalid file format. Please upload a PDF, DOCX, or TXT file.")
