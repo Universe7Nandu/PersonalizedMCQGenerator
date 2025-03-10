@@ -56,7 +56,7 @@ def generate_mcqs(input_text, num_questions):
     Build a prompt by inserting the extracted text (input_text) into the prompt.
     The {input_text} placeholder is replaced by the content from the uploaded file.
     """
-    prompt = f"""
+    prompt = """
 You are an AI assistant helping the user generate multiple-choice questions (MCQs) based on the following text:
 "{input_text}"
 Please generate {num_questions} MCQs from the text. Each question should include:
@@ -72,7 +72,7 @@ B) [option B]
 C) [option C]
 D) [option D]
 Correct Answer: [correct option]
-    """  """
+    """
     llm = ChatGroq(
         temperature=0.7,
         groq_api_key=GROQ_API_KEY,
