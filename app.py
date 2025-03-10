@@ -15,7 +15,7 @@ nest_asyncio.apply()
 # Configuration & Setup
 # ------------------------------
 # Set your Groq API key here or via an environment variable
-GROQ_API_KEY = os.getenv("GROQ_API_KEY", "YOUR_GROQ_API_KEY_HERE")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "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")
 
 app = Flask(__name__)
 app.config['UPLOAD_FOLDER'] = 'uploads/'
