@@ -6,22 +6,20 @@ import asyncio
 import nest_asyncio
 from langchain_groq import ChatGroq
 
-# -------------------------------------------------------------------
-# Allow asyncio to run in Streamlit
+###############################################################################
+# ALLOW ASYNCIO IN STREAMLIT
+###############################################################################
 nest_asyncio.apply()
 
-# -------------------------------------------------------------------
-# CONFIGURATION
-# -------------------------------------------------------------------
+###############################################################################
+# CONFIG
+###############################################################################
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "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")
 
-# -------------------------------------------------------------------
-# DATABASE INIT
-# -------------------------------------------------------------------
+###############################################################################
+# INITIALIZE DATABASE
+###############################################################################
 def init_db():
-    """
-    Create or connect to an SQLite database to store MCQ results.
-    """
     conn = sqlite3.connect("mcq_results.db")
     c = conn.cursor()
     c.execute(
@@ -42,16 +40,12 @@ def init_db():
     conn.commit()
     conn.close()
 
-# -------------------------------------------------------------------
-# MCQ GENERATION (GROQ)
-# -------------------------------------------------------------------
+###############################################################################
+# MCQ GENERATION (ASYNC)
+###############################################################################
 async def async_generate_single_mcq(topic, difficulty):
     """
-    Generate a single MCQ with the Groq model, returning:
-      - question
-      - options
-      - correct_answer
-      - explanation
+    Generates a single MCQ with the Groq model.
     """
     prompt = (
         f"You are a helpful AI specialized in generating educational multiple-choice questions with detailed explanations.\n\n"
@@ -105,7 +99,6 @@ async def async_generate_single_mcq(topic, difficulty):
         elif line.startswith("Explanation:"):
             explanation = line.replace("Explanation:", "").strip()
 
-    # If parsing fails or we don't have a valid MCQ
     if not question or len(options) != 4 or not correct_answer or not explanation:
         return {
             "question": "No valid question generated. (Parsing error)",
@@ -123,7 +116,7 @@ async def async_generate_single_mcq(topic, difficulty):
 
 def generate_multiple_mcqs(topic, difficulty, num_questions):
     """
-    Generate multiple MCQs asynchronously, store them in a list, and return.
+    Runs multiple MCQ generations asynchronously.
     """
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
@@ -132,13 +125,12 @@ def generate_multiple_mcqs(topic, difficulty, num_questions):
     loop.close()
     return mcqs
 
-# -------------------------------------------------------------------
+###############################################################################
 # SAVE & ANALYTICS
-# -------------------------------------------------------------------
+###############################################################################
 def save_result(topic, difficulty, question, options, correct_answer, explanation, user_answer):
     """
-    Save the user's result (correct or incorrect) to the SQLite database.
-    Returns 1 if correct, 0 otherwise.
+    Stores the user's attempt in SQLite DB. Returns 1 if correct, 0 if incorrect.
     """
     is_correct = 1 if user_answer.strip().lower() == correct_answer.strip().lower() else 0
     conn = sqlite3.connect("mcq_results.db")
@@ -156,7 +148,7 @@ def save_result(topic, difficulty, question, options, correct_answer, explanatio
 
 def get_performance():
     """
-    Retrieve overall performance from the database.
+    Calculates overall performance stats from the DB.
     """
     conn = sqlite3.connect("mcq_results.db")
     c = conn.cursor()
@@ -169,12 +161,12 @@ def get_performance():
         accuracy = 0
     return total, correct, accuracy
 
-# -------------------------------------------------------------------
-# CHATBOT FUNCTIONALITY (GROQ)
-# -------------------------------------------------------------------
+###############################################################################
+# CHATBOT
+###############################################################################
 def generate_chat_response(history):
     """
-    Use the same Groq model to generate chatbot responses.
+    Uses the Groq model to generate a chatbot response.
     """
     try:
         llm = ChatGroq(
@@ -187,13 +179,15 @@ def generate_chat_response(history):
     except Exception as e:
         return f"Error generating response: {e}"
 
-# -------------------------------------------------------------------
-# APP UI
-# -------------------------------------------------------------------
+###############################################################################
+# STREAMLIT APP
+###############################################################################
 init_db()
 st.set_page_config(page_title="Adaptive Educational Assessment System", layout="centered")
 
+# -----------------------------
 # Custom CSS
+# -----------------------------
 st.markdown("""
 <style>
 html, body {
@@ -242,125 +236,132 @@ h1, h2, h3, label {
 </style>
 """, unsafe_allow_html=True)
 
+# -----------------------------
 # Sidebar
+# -----------------------------
 st.sidebar.markdown("### Adaptive Educational Assessment System")
 st.sidebar.write("""
 **Features**:
-- Generate multiple MCQs with a single click
-- Track performance & see detailed explanations
-- Chatbot for interactive educational help
-- Professional UI with custom CSS
+- Generate multiple MCQs (with explanations).
+- Track performance & see results in a local DB.
+- Chatbot for additional educational help.
 """)
 
-# Initialize session state for MCQs
+# -----------------------------
+# Session State Initialization
+# -----------------------------
 if "mcqs" not in st.session_state:
     st.session_state.mcqs = []
-if "current_question_index" not in st.session_state:
-    st.session_state.current_question_index = 0
+if "current_q_idx" not in st.session_state:
+    st.session_state.current_q_idx = 0
 if "user_answers" not in st.session_state:
     st.session_state.user_answers = []
 if "submitted" not in st.session_state:
     st.session_state.submitted = False
 if "num_questions" not in st.session_state:
     st.session_state.num_questions = 0
+if "chat_history" not in st.session_state:
+    st.session_state.chat_history = [
+        {"role": "system", "content": "You are a helpful educational assistant. Provide clear explanations and guidance on educational topics."}
+    ]
 
+# -----------------------------
+# Create Tabs
+# -----------------------------
 tabs = st.tabs(["MCQ Generator", "Chatbot"])
 
-# -------------------------------------------------------------------
-# TAB 1: MCQ Generator
-# -------------------------------------------------------------------
+# ============================================================================
+# TAB 1: MCQ GENERATOR
+# ============================================================================
 with tabs[0]:
     st.title("MCQ Generator 🌟")
 
-    # Input fields for MCQ generation
-    topic = st.text_input("Enter Topic (e.g., Math, Science, History)", key="topic_input")
-    difficulty = st.selectbox("Select Difficulty", ["Easy", "Medium", "Hard"], key="difficulty_select")
-    num_questions = st.number_input("How many MCQs would you like to generate?", min_value=1, max_value=50, value=5, step=1, key="num_q_input")
+    # --- MCQ Generation Form ---
+    with st.form("generate_mcq_form", clear_on_submit=False):
+        topic = st.text_input("Enter Topic (e.g., Math, Science, History)", key="topic_input")
+        difficulty = st.selectbox("Select Difficulty", ["Easy", "Medium", "Hard"], key="difficulty_select")
+        num_questions = st.number_input(
+            "How many MCQs would you like to generate?",
+            min_value=1, max_value=50, value=5, step=1,
+            key="num_q_input"
+        )
+        generate_button = st.form_submit_button("Generate MCQs")
 
-    if st.button("Generate MCQs"):
-        # Reset session state to start fresh
+    if generate_button:
+        # Clear old data
         st.session_state.mcqs = generate_multiple_mcqs(topic, difficulty, num_questions)
-        st.session_state.current_question_index = 0
+        st.session_state.current_q_idx = 0
         st.session_state.user_answers = [None] * num_questions
         st.session_state.submitted = False
         st.session_state.num_questions = num_questions
         st.success(f"Generated {num_questions} MCQ(s) for topic '{topic}' at {difficulty} difficulty!")
 
-    # If MCQs exist, show the current question
+    # If MCQs exist, display the current question
     if st.session_state.mcqs:
-        idx = st.session_state.current_question_index
+        idx = st.session_state.current_q_idx
         total_q = st.session_state.num_questions
+
         if idx < total_q:
             mcq = st.session_state.mcqs[idx]
-            
+
             st.subheader(f"Question {idx+1} of {total_q}")
             st.write(mcq["question"])
 
-            # Display options
-            if mcq["options"]:
-                # If user hasn't answered this question, we create a radio
+            # --- Question Form ---
+            with st.form(f"question_form_{idx}", clear_on_submit=False):
+                # If the user has not chosen an answer yet, default to None
                 if st.session_state.user_answers[idx] is None:
-                    st.session_state.user_answers[idx] = st.radio(
-                        "Select your answer:",
-                        mcq["options"],
-                        key=f"user_answer_radio_{idx}"
-                    )
+                    st.session_state.user_answers[idx] = ""
+
+                # Radio to select answer
+                user_answer = st.radio(
+                    "Select your answer:",
+                    mcq["options"],
+                    index=0 if st.session_state.user_answers[idx] == "" else mcq["options"].index(st.session_state.user_answers[idx]),
+                    key=f"user_answer_radio_{idx}"
+                )
+
+                submit_answer_btn = st.form_submit_button("Submit Answer")
+
+            # If the user submitted the answer
+            if submit_answer_btn:
+                # Save user answer in session
+                st.session_state.user_answers[idx] = user_answer
+                # Save to DB
+                correct = save_result(
+                    topic,
+                    difficulty,
+                    mcq["question"],
+                    mcq["options"],
+                    mcq["correct_answer"],
+                    mcq["explanation"],
+                    user_answer
+                )
+                # Show feedback
+                if correct == 1:
+                    st.success("Correct Answer! 🎉")
                 else:
-                    # If user has already selected an answer, we show that as pre-selected
-                    st.radio(
-                        "Select your answer:",
-                        mcq["options"],
-                        index=mcq["options"].index(st.session_state.user_answers[idx]),
-                        key=f"user_answer_radio_{idx}",
-                        disabled=True
-                    )
+                    st.error(f"Incorrect. The correct answer is: {mcq['correct_answer']}")
+                st.info(f"Explanation: {mcq['explanation']}")
+                st.session_state.submitted = True
 
-                # Submit button
-                if not st.session_state.submitted:
-                    if st.button("Submit Answer"):
-                        user_answer = st.session_state.user_answers[idx]
-                        correct = save_result(
-                            topic,
-                            difficulty,
-                            mcq["question"],
-                            mcq["options"],
-                            mcq["correct_answer"],
-                            mcq["explanation"],
-                            user_answer
-                        )
-                        st.session_state.submitted = True
-                        if correct == 1:
-                            st.success("Correct Answer! 🎉")
-                        else:
-                            st.error(f"Incorrect. The correct answer is: {mcq['correct_answer']}")
-                        st.info(f"Explanation: {mcq['explanation']}")
+            # If user has submitted, show next button
+            if st.session_state.submitted:
+                if idx < total_q - 1:
+                    if st.button("Next Question"):
+                        st.session_state.current_q_idx += 1
+                        st.session_state.submitted = False
                 else:
-                    # Already submitted => show correctness + explanation
-                    user_answer = st.session_state.user_answers[idx]
-                    if user_answer.strip().lower() == mcq["correct_answer"].strip().lower():
-                        st.success("Correct Answer! 🎉")
-                    else:
-                        st.error(f"Incorrect. The correct answer is: {mcq['correct_answer']}")
-                    st.info(f"Explanation: {mcq['explanation']}")
+                    st.write("You have reached the end of the MCQ set!")
 
-                # Next question button
-                if st.session_state.submitted:
-                    if idx < total_q - 1:
-                        if st.button("Next Question"):
-                            st.session_state.current_question_index += 1
-                            st.session_state.submitted = False
-                    else:
-                        st.write("You have reached the end of the MCQ set!")
-            else:
-                st.warning("No options available. Try generating again or check your API key.")
-
-    # Performance & Adaptive Feedback
+    # Show performance stats
     st.subheader("Performance Analytics")
     total, correct, accuracy = get_performance()
     st.write(f"**Total Attempts:** {total}")
-    st.write(f"**Correct Answers:** {correct}")
+    st.write(f"**Correct Answers:** {correct if correct else 0}")
     st.write(f"**Accuracy:** {accuracy:.2f}%")
-    
+
+    # Adaptive suggestions
     if total >= 5:
         if accuracy < 50:
             st.info("Consider reviewing the material or trying easier questions.")
@@ -369,26 +370,22 @@ with tabs[0]:
         else:
             st.info("Keep practicing to improve your skills!")
 
-# -------------------------------------------------------------------
-# TAB 2: Chatbot
-# -------------------------------------------------------------------
+# ============================================================================
+# TAB 2: CHATBOT
+# ============================================================================
 with tabs[1]:
     st.title("Educational Assistant Chatbot 🤖")
     st.write("Ask any questions or seek further clarification on educational topics.")
 
-    if "chat_history" not in st.session_state:
-        st.session_state.chat_history = [
-            {"role": "system", "content": "You are a helpful educational assistant. Provide clear explanations and guidance on educational topics."}
-        ]
+    with st.form("chat_form"):
+        user_input = st.text_input("Your message:", key="chat_input")
+        send_button = st.form_submit_button("Send")
 
-    user_input = st.text_input("Your message:", key="chat_input")
-    if st.button("Send", key="chat_send"):
-        if user_input.strip():
-            st.session_state.chat_history.append({"role": "user", "content": user_input})
-            with st.spinner("Assistant is typing..."):
-                response = generate_chat_response(st.session_state.chat_history)
-            st.session_state.chat_history.append({"role": "assistant", "content": response})
-            st.experimental_rerun()
+    if send_button and user_input.strip():
+        st.session_state.chat_history.append({"role": "user", "content": user_input})
+        with st.spinner("Assistant is typing..."):
+            response = generate_chat_response(st.session_state.chat_history)
+        st.session_state.chat_history.append({"role": "assistant", "content": response})
 
     st.markdown("---")
     st.subheader("Conversation:")
