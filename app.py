@@ -58,10 +58,8 @@ def extract_text(file_obj, filename):
 
 async def async_generate_mcqs(input_text, num_questions, difficulty, include_summary):
     """
-    Build a prompt that uses the extracted text. It includes:
-      - The selected difficulty
-      - The requested number of MCQs
-      - Optionally, a short summary
+    Build a prompt using the extracted text.
+    Optionally include a summary request.
     """
     summary_part = ""
     if include_summary:
@@ -96,7 +94,7 @@ Correct Answer: [correct option]
     return response.content.strip()
 
 def generate_mcqs(input_text, num_questions, difficulty, include_summary):
-    """Run the asynchronous generation function in a blocking way."""
+    """Run the async generation function in a blocking way."""
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     mcqs = loop.run_until_complete(async_generate_mcqs(input_text, num_questions, difficulty, include_summary))
@@ -104,16 +102,18 @@ def generate_mcqs(input_text, num_questions, difficulty, include_summary):
     return mcqs
 
 def create_pdf(text):
-    """Generate a PDF from the given text and return its bytes."""
+    """
+    Generate a PDF from the given text.
+    This function uses dest="S" to return the PDF as a string, which is then encoded.
+    """
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("Arial", size=12)
-    # Write each line in the PDF
     for line in text.split("\n"):
         pdf.multi_cell(0, 10, line)
-    output = BytesIO()
-    pdf.output(output)
-    return output.getvalue()
+    # Use dest="S" to get the PDF as a string, then encode to bytes.
+    pdf_output = pdf.output(dest="S").encode("latin1")
+    return pdf_output
 
 # ------------------------------
 # Streamlit App UI
