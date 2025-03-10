@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>MCQ Generation Results</title>
+  <title>MCQ Results</title>
   <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.0/css/bootstrap.min.css">
   <style>
     body {
@@ -20,9 +20,10 @@
     }
     pre {
       background-color: #f8f9fa;
+      color: #333;
       padding: 15px;
       border-radius: 5px;
-      color: #333;
+      white-space: pre-wrap; /* allow line-wrapping */
     }
   </style>
 </head>
@@ -30,12 +31,12 @@
   <div class="container">
     <h1 class="text-center">Generated MCQs</h1>
     <div class="card">
-      <h3>MCQs:</h3>
+      <h3>Your MCQs:</h3>
       <pre>{{ mcqs }}</pre>
       <hr>
-      <a href="/download/{{ txt_filename }}" class="btn btn-success">Download as TXT</a>
-      <a href="/download/{{ pdf_filename }}" class="btn btn-danger">Download as PDF</a>
-      <br><br>
+      <a href="/download/{{ txt_filename }}" class="btn btn-success">Download TXT</a>
+      <a href="/download/{{ pdf_filename }}" class="btn btn-danger">Download PDF</a>
+      <hr>
       <a href="/" class="btn btn-primary">Generate Another</a>
     </div>
   </div>
