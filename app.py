@@ -16,7 +16,7 @@ nest_asyncio.apply()
 ###############################################################################
 # CONFIGURATION
 ###############################################################################
-# Hardcode your Groq API key as requested (not recommended for production).
+# Hardcode your Groq API key here (not recommended for production).
 os.environ["GROQ_API_KEY"] = "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"
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
@@ -26,7 +26,6 @@ app.config['RESULTS_FOLDER'] = 'results/'
 app.config['ALLOWED_EXTENSIONS'] = {'pdf', 'docx', 'txt'}
 
 # Ensure folders exist
-import os
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 os.makedirs(app.config['RESULTS_FOLDER'], exist_ok=True)
 
@@ -34,6 +33,7 @@ os.makedirs(app.config['RESULTS_FOLDER'], exist_ok=True)
 # UTILITY FUNCTIONS
 ###############################################################################
 def allowed_file(filename):
+    """Check if the file extension is allowed."""
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in app.config['ALLOWED_EXTENSIONS']
 
 def extract_text_from_file(file_path):
@@ -52,15 +52,25 @@ def extract_text_from_file(file_path):
             return f.read()
     return None
 
-async def async_generate_mcqs(input_text, num_questions):
+async def async_generate_content(input_text, num_questions, difficulty, include_summary):
     """
     Build a prompt by inserting the extracted text (input_text) into the prompt.
-    The {input_text} placeholder is replaced by the content from the uploaded file.
+    We also factor in the difficulty and an optional summary request.
     """
-    prompt = f"""
+    base_prompt = f"""
 You are an AI assistant helping the user generate multiple-choice questions (MCQs) based on the following text:
 \"{input_text}\"
-Please generate {num_questions} MCQs from the text. Each question should include:
+
+Difficulty: {difficulty}
+Number of MCQs: {num_questions}
+"""
+
+    summary_part = ""
+    if include_summary:
+        summary_part = "Additionally, produce a short summary of the text labeled 'SUMMARY:' on its own line.\n"
+
+    mcq_instructions = f"""
+Please generate exactly {num_questions} MCQs from the text. Each question should include:
 - A clear question
 - Four answer options labeled A, B, C, D
 - The correct answer clearly indicated
@@ -73,7 +83,10 @@ B) [option B]
 C) [option C]
 D) [option D]
 Correct Answer: [correct option]
-    """
+"""
+
+    # Combine into one final prompt
+    prompt = base_prompt + summary_part + mcq_instructions
 
     llm = ChatGroq(
         temperature=0.7,
@@ -84,46 +97,47 @@ Correct Answer: [correct option]
     response = await llm.ainvoke(messages)
     return response.content.strip()
 
-def generate_mcqs(input_text, num_questions):
+def generate_content(input_text, num_questions, difficulty, include_summary):
     """Run the async function in a blocking way."""
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-    mcqs_text = loop.run_until_complete(async_generate_mcqs(input_text, num_questions))
+    result_text = loop.run_until_complete(async_generate_content(input_text, num_questions, difficulty, include_summary))
     loop.close()
-    return mcqs_text
+    return result_text
 
-def save_mcqs_to_txt(mcqs, filename):
+def save_text_file(content, filename):
     path = os.path.join(app.config['RESULTS_FOLDER'], filename)
     with open(path, 'w', encoding='utf-8') as f:
-        f.write(mcqs)
+        f.write(content)
     return path
 
-def create_pdf(mcqs, filename):
+def create_pdf_file(content, filename):
+    """
+    Create a PDF file from the entire content. This may include a 'SUMMARY:' line
+    plus multiple MCQs separated by '## MCQ'.
+    """
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("Arial", size=12)
 
-    # Split MCQs by "## MCQ" delimiter
-    for block in mcqs.split("## MCQ"):
-        block = block.strip()
-        if block:
-            pdf.multi_cell(0, 10, block)
-            pdf.ln(5)
-
+    # We'll just place the entire text in the PDF, line by line.
+    for line in content.split('\n'):
+        pdf.multi_cell(0, 10, line)
     pdf_path = os.path.join(app.config['RESULTS_FOLDER'], filename)
     pdf.output(pdf_path)
     return pdf_path
 
 ###############################################################################
-# ROUTES
+# FLASK ROUTES
 ###############################################################################
 @app.route('/')
 def index():
+    """Render the main page (upload form)."""
     return render_template('index.html')
 
 @app.route('/generate', methods=['POST'])
 def generate():
-    # Validate file
+    """Handle file upload and MCQ generation."""
     if 'file' not in request.files:
         return "No file part", 400
 
@@ -133,33 +147,42 @@ def generate():
         file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
         file.save(file_path)
 
+        # Extract text
         text = extract_text_from_file(file_path)
         if text:
-            # Number of MCQs from form
+            # Number of MCQs
             num_questions = request.form.get('num_questions', '5')
             try:
                 num_questions = int(num_questions)
             except ValueError:
                 num_questions = 5
 
-            # Generate MCQs
-            mcqs = generate_mcqs(text, num_questions)
+            # Difficulty
+            difficulty = request.form.get('difficulty', 'Medium')
+
+            # Summary?
+            include_summary = bool(request.form.get('include_summary', False))
+
+            # Generate the combined content
+            output = generate_content(text, num_questions, difficulty, include_summary)
 
             # Save as TXT and PDF
             base_name = filename.rsplit('.', 1)[0]
-            txt_filename = f"generated_mcqs_{base_name}.txt"
-            pdf_filename = f"generated_mcqs_{base_name}.pdf"
-            save_mcqs_to_txt(mcqs, txt_filename)
-            create_pdf(mcqs, pdf_filename)
+            txt_filename = f"generated_content_{base_name}.txt"
+            pdf_filename = f"generated_content_{base_name}.pdf"
+            save_text_file(output, txt_filename)
+            create_pdf_file(output, pdf_filename)
 
+            # Render results
             return render_template('results.html',
-                                   mcqs=mcqs,
+                                   content=output,
                                    txt_filename=txt_filename,
                                    pdf_filename=pdf_filename)
     return "Invalid file format or no file uploaded", 400
 
 @app.route('/download/<filename>')
 def download_file(filename):
+    """Serve the generated file for download."""
     file_path = os.path.join(app.config['RESULTS_FOLDER'], filename)
     if os.path.exists(file_path):
         return send_file(file_path, as_attachment=True)
@@ -169,5 +192,5 @@ def download_file(filename):
 # MAIN
 ###############################################################################
 if __name__ == '__main__':
-    # Disable reloader to avoid signal errors in some hosted environments
+    # Some environments disallow the reloader due to signal usage
     app.run(debug=True, use_reloader=False)
