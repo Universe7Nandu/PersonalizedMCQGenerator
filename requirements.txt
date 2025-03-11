@@ -17,4 +17,4 @@ pypdf
 Flask
 pdfplumber
 fpdf
-
+huggingface_hub==0.15.1
