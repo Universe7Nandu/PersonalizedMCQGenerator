@@ -9,7 +9,11 @@ import docx
 from io import BytesIO
 from fpdf import FPDF
 from langchain_groq import ChatGroq
-from langchain.schema import HumanMessage, SystemMessage
+# Try importing from langchain.schema; if that fails, import from langchain.schema.chat_message.
+try:
+    from langchain.schema import HumanMessage, SystemMessage
+except ImportError:
+    from langchain.schema.chat_message import HumanMessage, SystemMessage
 from langchain.memory import ConversationBufferMemory
 
 # Allow asyncio to run in Streamlit
@@ -171,7 +175,6 @@ if mode == "Document MCQ":
                 num_questions = st.number_input("Number of MCQs:", min_value=1, max_value=20, value=5)
                 if st.button("Generate MCQ Test"):
                     try:
-                        # Fixed multiline f-string without escapes:
                         mcq_list = ast.literal_eval(
                             ChatGroq(
                                 temperature=0.7,
