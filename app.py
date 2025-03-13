@@ -324,7 +324,7 @@ if mode == "MCQ Generator":
             st.success("Document processed successfully!")
             st.write("**Document Preview** (first 500 characters):")
             st.write(doc_text[:500] + "...")
-            
+
             # Setup states
             if "mcqs" not in st.session_state:
                 st.session_state.mcqs = []
@@ -347,7 +347,7 @@ if mode == "MCQ Generator":
                     st.success(f"Generated {len(st.session_state.mcqs)} MCQs. Scroll down to begin!")
                 else:
                     st.warning("No MCQs generated. Try adjusting your content or question count.")
-            
+
             # Display MCQs
             if st.session_state.mcqs and not st.session_state.done:
                 idx = st.session_state.current_q
@@ -367,13 +367,12 @@ if mode == "MCQ Generator":
                     else:
                         st.warning("Invalid MCQ format. Skipping this question.")
                         st.session_state.current_q += 1
-                        st.experimental_rerun()
-                    
-                    # If user hasn't chosen an answer, default to ""
+                        # Moved rerun to button callback, so no top-level rerun
+                        st.stop()
+
                     if st.session_state.user_answers[idx] == "":
                         st.session_state.user_answers[idx] = ""
 
-                    # Show each option in a 'box' style
                     user_choice = st.radio("Select your answer:", opts, key=f"mcq_{idx}")
 
                     if st.button("Submit Answer", key=f"submit_{idx}"):
@@ -429,7 +428,7 @@ else:
             {"role": "assistant", "content": "You are a helpful educational assistant."}
         ]
 
-    # Chat form (Enter or Send button)
+    # Chat form
     with st.form("chat_form"):
         user_input = st.text_input("Your message:")
         send_submitted = st.form_submit_button("Send")
@@ -439,7 +438,7 @@ else:
         with st.spinner("Assistant is typing..."):
             response_content = query_chatbot(user_input)
         st.session_state.chat_history.append({"role": "assistant", "content": response_content})
-    
+
     st.markdown("---")
     st.write("### Conversation:")
     for msg in st.session_state.chat_history:
@@ -447,7 +446,7 @@ else:
             st.markdown(f"<div class='chat-bubble assistant-bubble'>{msg['content']}</div>", unsafe_allow_html=True)
         else:
             st.markdown(f"<div class='chat-bubble user-bubble'>{msg['content']}</div>", unsafe_allow_html=True)
-    
+
     # Buttons to download or reset chat
     col1, col2, col3 = st.columns([1,1,1])
     with col1:
@@ -463,4 +462,5 @@ else:
             st.session_state.chat_history = [
                 {"role": "assistant", "content": "You are a helpful educational assistant."}
             ]
+            # Instead of top-level rerun, do it in button callback
             st.experimental_rerun()
