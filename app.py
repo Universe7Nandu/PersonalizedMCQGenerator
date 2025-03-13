@@ -15,7 +15,7 @@ except ImportError:
     from langchain.schema.chat_message import HumanMessage, SystemMessage
 from langchain.memory import ConversationBufferMemory
 
-# Allow asyncio in Streamlit
+# Allow asyncio to run in Streamlit
 nest_asyncio.apply()
 
 ###############################################################################
@@ -23,7 +23,7 @@ nest_asyncio.apply()
 ###############################################################################
 st.set_page_config(page_title="Adaptive MCQ & Chatbot", layout="wide")
 
-# Hardcode your Groq API key (for demo; use secrets in production)
+# Hardcode your Groq API key (for demo; in production use secrets)
 os.environ["GROQ_API_KEY"] = "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"
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
@@ -36,6 +36,7 @@ chat = ChatGroq(temperature=0.7, model_name="llama3-70b-8192", groq_api_key=GROQ
 # UTILITY FUNCTIONS
 ###############################################################################
 def extract_text(file_obj, filename):
+    """Extract text from PDF, DOCX, or TXT."""
     ext = filename.rsplit('.', 1)[1].lower()
     if ext == "pdf":
         try:
@@ -61,6 +62,7 @@ def extract_text(file_obj, filename):
         return ""
 
 def create_pdf_summary(mcqs, user_answers):
+    """Generate a PDF summary of MCQ results."""
     score = 0
     pdf = FPDF()
     pdf.add_page()
@@ -91,6 +93,7 @@ def create_pdf_summary(mcqs, user_answers):
     return pdf.output(dest="S").encode("latin1")
 
 def create_txt_summary(mcqs, user_answers):
+    """Generate a TXT summary of MCQ results."""
     lines = []
     score = 0
     for i, (mcq, ans) in enumerate(zip(mcqs, user_answers)):
@@ -114,6 +117,7 @@ def create_txt_summary(mcqs, user_answers):
     return "\n".join(lines)
 
 def query_chatbot(user_query):
+    """Chatbot query function using conversation memory."""
     system_prompt = """
 System Prompt: You are an expert educational assistant. Provide clear, concise, and helpful answers to educational queries.
 """
@@ -130,12 +134,24 @@ System Prompt: You are an expert educational assistant. Provide clear, concise, 
         return f"Error: {str(e)}"
 
 async def async_generate_mcqs(doc_text, num_questions):
+    """
+    Generate MCQs from the document text in the required format:
+    - For 4-option questions: [Question, A, B, C, D, Ans]
+    - For True/False questions: [Question, True, False, Ans]
+    Output only a Python list.
+    """
+    # Refined system prompt for precision
     system_prompt = """
-System Prompt: You are an expert educational assessment generator trained to produce engaging multiple-choice questions (MCQs) for enterprise-level adaptive learning systems.
-Your task is to analyze the given text and generate relevant MCQs in the following formats:
-- For 4-option questions: [Question, A, B, C, D, Ans] (6 elements)
-- For True/False questions: [Question, True, False, Ans] (3 elements)
-Output only a Python list, with no extra commentary.
+System Prompt: You are an expert educational assessment generator trained to produce engaging, high-quality multiple-choice questions (MCQs) for enterprise-level adaptive learning systems.
+Your task is to:
+1. Analyze the provided educational content.
+2. Generate relevant MCQs that match the topic and difficulty.
+3. For each question, generate exactly four answer options (A, B, C, D) with one correct answer, or for True/False questions, provide two options.
+4. Mark the correct answer clearly.
+5. Output each question in one of the following formats:
+   - Standard: [Question, A, B, C, D, Ans] (6 elements)
+   - True/False: [Question, True, False, Ans] (4 elements)
+Output only a Python list with no additional commentary.
 """
     user_prompt = f"""
 Generate exactly {num_questions} MCQs from the text below:
@@ -150,6 +166,7 @@ Remember the required format.
     return response.content
 
 def generate_mcqs(doc_text, num_questions):
+    """Blocking wrapper for async MCQ generation."""
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     result = loop.run_until_complete(async_generate_mcqs(doc_text, num_questions))
@@ -162,6 +179,7 @@ def generate_mcqs(doc_text, num_questions):
         return []
 
 def chat_to_txt(chat_history):
+    """Convert chat history to a plain text string."""
     lines = []
     for msg in chat_history:
         role = msg["role"]
@@ -173,6 +191,7 @@ def chat_to_txt(chat_history):
     return "\n".join(lines)
 
 def chat_to_pdf(chat_history):
+    """Convert chat history to PDF bytes."""
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("Arial", size=12)
@@ -189,7 +208,7 @@ def chat_to_pdf(chat_history):
     return pdf.output(dest="S").encode("latin1")
 
 ###############################################################################
-# CALLBACK FUNCTIONS (for buttons)
+# CALLBACKS FOR BUTTONS
 ###############################################################################
 def submit_answer(idx, user_choice, mcq):
     selected_letter = user_choice.split(")")[0].strip().upper()
@@ -206,7 +225,7 @@ def next_question():
     st.session_state.current_q += 1
 
 def new_test():
-    for key in ["mcqs", "current_q", "user_answers", "done"]:
+    for key in ["mcqs", "current_q", "user_answers", "done", "score"]:
         st.session_state.pop(key, None)
 
 def reset_chat():
@@ -280,9 +299,9 @@ h1, h2, h3, h4, h5, label {
 """, unsafe_allow_html=True)
 
 ###############################################################################
-# SIDEBAR - Chat History Display
+# SIDEBAR - Chat History
 ###############################################################################
-st.sidebar.markdown("### Chat History")
+st.sidebar.title("Chat History")
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = [{"role": "assistant", "content": "You are a helpful educational assistant."}]
 for msg in st.session_state.chat_history:
@@ -295,7 +314,7 @@ for msg in st.session_state.chat_history:
 # MAIN APP
 ###############################################################################
 st.title("Adaptive MCQ Generator & Chatbot")
-st.write("A scalable AI system that transforms educational content into engaging MCQs with adaptive difficulty and a dynamic chatbot.")
+st.write("A scalable AI system that transforms educational content into engaging MCQs and provides a dynamic chatbot interface.")
 
 mode_selection = st.sidebar.radio("Select Mode", ["MCQ Generator", "Chatbot"])
 
@@ -341,6 +360,7 @@ if mode_selection == "MCQ Generator":
                     mcq = st.session_state.mcqs[idx]
                     st.markdown(f"### Question {idx+1} of {total}")
                     st.markdown(f"**{mcq[0]}**")
+                    
                     if len(mcq) == 6:
                         letters = ["A", "B", "C", "D"]
                         opts = [f"{letters[i]}) {mcq[i+1]}" for i in range(4)]
@@ -349,13 +369,14 @@ if mode_selection == "MCQ Generator":
                     else:
                         st.warning("Invalid MCQ format. Skipping this question.")
                         st.session_state.current_q += 1
-                        # Use stop() to halt execution in this branch.
                         st.stop()
                     
                     if st.session_state.user_answers[idx] == "":
                         st.session_state.user_answers[idx] = ""
                     
-                    user_choice = st.radio("Select your answer:", opts, key=f"mcq_{idx}")
+                    # Wrap the radio in a container to mimic box-style
+                    with st.container():
+                        user_choice = st.radio("Select your answer:", opts, key=f"mcq_{idx}")
                     
                     if st.button("Submit Answer", key=f"submit_{idx}", on_click=lambda: submit_answer(idx, user_choice, mcq)):
                         pass
@@ -380,7 +401,7 @@ if mode_selection == "MCQ Generator":
                 st.button("New Test", on_click=new_test)
 else:
     st.write("## Educational Chatbot")
-    st.write("Ask any educational question or discuss topics. Your chat history is displayed in the sidebar.")
+    st.write("Ask or discuss anything about educational topics. Your chat history is shown in the sidebar.")
     
     with st.form("chat_form"):
         user_input = st.text_input("Your message:")
