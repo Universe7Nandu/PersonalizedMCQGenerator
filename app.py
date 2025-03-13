@@ -1,4 +1,5 @@
 import os
+import ast
 import json
 import asyncio
 import nest_asyncio
@@ -8,6 +9,8 @@ import docx
 from io import BytesIO
 from fpdf import FPDF
 from langchain_groq import ChatGroq
+from langchain.schema import HumanMessage, SystemMessage
+from langchain.memory import ConversationBufferMemory
 
 # Allow asyncio in Streamlit
 nest_asyncio.apply()
@@ -15,11 +18,19 @@ nest_asyncio.apply()
 # ------------------------------
 # Configuration & Setup
 # ------------------------------
-st.set_page_config(page_title="Interactive MCQ Test Generator", layout="centered")
+st.set_page_config(page_title="Interactive MCQ & Chatbot Generator", layout="wide")
+
+# Sidebar: Mode selection
+mode = st.sidebar.radio("Select Mode", ["Chatbot", "Document MCQ"])
 
 # Set your Groq API key (hardcoded as requested)
 os.environ["GROQ_API_KEY"] = "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"
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+
+# Initialize Chat Model (used in both modes)
+if "memory" not in st.session_state:
+    st.session_state.memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
+chat = ChatGroq(temperature=0.7, model_name="llama3-70b-8192", groq_api_key=GROQ_API_KEY)
 
 # ------------------------------
 # Utility Functions
@@ -41,8 +52,7 @@ def extract_text(file_obj, filename):
     elif ext == "docx":
         try:
             doc = docx.Document(file_obj)
-            text = " ".join(para.text for para in doc.paragraphs)
-            return text
+            return " ".join(para.text for para in doc.paragraphs)
         except Exception as e:
             st.error(f"Error extracting DOCX: {e}")
             return ""
@@ -55,158 +65,221 @@ def extract_text(file_obj, filename):
     else:
         return ""
 
-async def async_generate_mcqs(input_text, num_questions, difficulty):
+async def async_generate_mcqs_from_doc(doc_text, num_questions):
     """
-    Generate MCQs from the input text.
-    The prompt instructs the model to output valid JSON with key 'questions', which maps to a list
-    of question objects. Each object contains:
-      - question: str
-      - options: list of four strings (each option text)
-      - correct: one of 'A', 'B', 'C', 'D'
-      - explanation: str (explanation for the correct answer)
+    Generate MCQs from the uploaded document text.
+    The prompt instructs the model to output a Python list where each element is a list of 6 elements:
+    [Question, OptionA, OptionB, OptionC, OptionD, CorrectOption]
+    Output ONLY a Python list.
     """
     prompt = f"""
-You are an AI assistant that generates multiple-choice questions (MCQs) based on the text provided.
-Difficulty: {difficulty}
-Number of Questions: {num_questions}
-
-For each question, output an object with the following keys:
-  - \"question\": The question text.
-  - \"options\": A list of four answer options.
-  - \"correct\": The letter (A, B, C, or D) indicating the correct answer.
-  - \"explanation\": A short explanation of why the correct answer is correct.
-
-Output the results as a valid JSON object with a key \"questions\" that maps to a list of question objects.
-
-Text:
-\"\"\"{input_text}\"\"\"
+You are an expert educational assessment generator. Based on the following document text, generate a list of multiple-choice questions (MCQs).
+Each question must be a Python list of 6 elements: [Question, OptionA, OptionB, OptionC, OptionD, CorrectOption].
+Generate exactly {num_questions} questions.
+Document text:
+\"\"\"{doc_text}\"\"\"
+Output only a Python list.
 """
-    llm = ChatGroq(
-        temperature=0.7,
-        groq_api_key=GROQ_API_KEY,
-        model_name="mixtral-8x7b-32768"
-    )
-    messages = [{"role": "user", "content": prompt}]
-    response = await llm.ainvoke(messages)
+    messages = [HumanMessage(content=prompt)]
+    response = asyncio.run(chat.ainvoke(messages))
     try:
-        data = json.loads(response.content)
-        return data.get("questions", [])
+        return ast.literal_eval(response.content)
     except Exception as e:
         st.error("Error parsing MCQ output: " + str(e))
         return []
 
-def generate_mcqs(input_text, num_questions, difficulty):
-    """Run the asynchronous MCQ generation in a blocking way."""
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    mcqs = loop.run_until_complete(async_generate_mcqs(input_text, num_questions, difficulty))
-    loop.close()
-    return mcqs
+def query_chatbot(user_query):
+    """
+    Normal chatbot query function.
+    Uses conversation memory and a system prompt.
+    """
+    system_prompt = """
+You are a helpful educational assistant. Answer questions and provide educational guidance.
+"""
+    past = st.session_state.memory.load_memory_variables({}).get("chat_history", [])
+    messages = [
+        SystemMessage(content=system_prompt),
+        HumanMessage(content=f"Past Chat: {past}\n\nUser: {user_query}")
+    ]
+    try:
+        response = chat.invoke(messages)
+        st.session_state.memory.save_context({"input": user_query}, {"output": response.content})
+        return response.content if response else "⚠️ No response."
+    except Exception as e:
+        return f"⚠️ Error: {str(e)}"
 
 def create_txt_summary(mcqs, responses):
-    """Create a summary text for the test results."""
-    summary_lines = []
+    """Create text summary for MCQ test results."""
+    lines = []
     score = 0
     for i, (q, user_ans) in enumerate(zip(mcqs, responses)):
-        correct_ans = q.get("correct", "").strip().upper()
-        is_correct = (user_ans.strip().upper() == correct_ans)
+        correct = q[-1].strip().upper()
+        is_correct = (user_ans.strip().upper() == correct)
         if is_correct:
             score += 1
-        summary_lines.append(f"Q{i+1}: {q.get('question', '')}")
-        for opt in q.get("options", []):
-            summary_lines.append(opt)
-        summary_lines.append(f"Your Answer: {user_ans} | Correct Answer: {correct_ans}")
-        summary_lines.append(f"Explanation: {q.get('explanation', '')}")
-        summary_lines.append(\"\"\"--------------------------------------\"\"\")
-    summary_lines.insert(0, f\"Final Score: {score}/{len(mcqs)}\\n\")
-    return "\n".join(summary_lines)
+        lines.append(f"Q{i+1}: {q[0]}")
+        lines.append(f"   A: {q[1]}")
+        lines.append(f"   B: {q[2]}")
+        lines.append(f"   C: {q[3]}")
+        lines.append(f"   D: {q[4]}")
+        lines.append(f"Your Answer: {user_ans} | Correct Answer: {correct}")
+        lines.append(f"Explanation: (Not provided)")  # Explanation not generated by our prompt here; you can modify as needed.
+        lines.append("--------------------------------------")
+    lines.insert(0, f"Final Score: {score} / {len(mcqs)}\\n")
+    return "\n".join(lines)
 
 def create_pdf_summary(mcqs, responses):
-    """Generate a PDF file from the test results and return as bytes."""
+    """Generate PDF summary from MCQ test results."""
     score = 0
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("Arial", size=12)
-    pdf.cell(0, 10, "MCQ Test Results", ln=True, align='C')
+    pdf.cell(0, 10, "MCQ Test Results", ln=True, align="C")
     pdf.ln(5)
     for i, (q, user_ans) in enumerate(zip(mcqs, responses)):
-        correct_ans = q.get("correct", "").strip().upper()
-        is_correct = (user_ans.strip().upper() == correct_ans)
+        correct = q[-1].strip().upper()
+        is_correct = (user_ans.strip().upper() == correct)
         if is_correct:
             score += 1
-        pdf.multi_cell(0, 10, f"Q{i+1}: {q.get('question', '')}")
-        for opt in q.get("options", []):
-            pdf.multi_cell(0, 10, opt)
-        pdf.multi_cell(0, 10, f"Your Answer: {user_ans} | Correct Answer: {correct_ans}")
-        pdf.multi_cell(0, 10, f"Explanation: {q.get('explanation', '')}")
+        pdf.multi_cell(0, 10, f"Q{i+1}: {q[0]}")
+        pdf.multi_cell(0, 10, f"A: {q[1]}")
+        pdf.multi_cell(0, 10, f"B: {q[2]}")
+        pdf.multi_cell(0, 10, f"C: {q[3]}")
+        pdf.multi_cell(0, 10, f"D: {q[4]}")
+        pdf.multi_cell(0, 10, f"Your Answer: {user_ans} | Correct Answer: {correct}")
+        pdf.multi_cell(0, 10, "Explanation: (Not provided)")
         pdf.ln(5)
         pdf.line(10, pdf.get_y(), 200, pdf.get_y())
         pdf.ln(5)
     pdf.set_font("Arial", size=14)
-    pdf.cell(0, 10, f"Final Score: {score}/{len(mcqs)}", ln=True, align='C')
-    output = BytesIO()
-    pdf.output(output, dest="F")
-    with open("temp.pdf", "rb") as f:  # Read the temporary file created by FPDF\n        pdf_bytes = f.read()\n    os.remove("temp.pdf")\n    return pdf_bytes
+    pdf.cell(0, 10, f"Final Score: {score} / {len(mcqs)}", ln=True, align="C")
+    return pdf.output(dest="S").encode("latin1")
 
 # ------------------------------
-# Custom CSS for Modern UI
+# Custom CSS for Modern, Attractive UI
 # ------------------------------
 st.markdown(
     """
     <style>
-    .main { background: linear-gradient(90deg, #74ABE2, #5563DE); }
-    .stTextArea, .stNumberInput, .stSelectbox { margin-bottom: 1rem; }
+    body { background: linear-gradient(90deg, #74ABE2, #5563DE); color: #E0E0E0; }
     .stButton>button { background-color: #ff5c5c; color: #fff; border-radius: 8px; border: none; padding: 0.5rem 1rem; }
     .stButton>button:hover { background-color: #ff3c3c; }
+    .title-container { text-align: center; font-size: 48px; font-weight: bold; margin-top: 10px; }
+    .sidebar .sidebar-content { background-color: #333333; color: #E0E0E0; padding: 1rem; border-radius: 8px; }
     </style>
     """,
     unsafe_allow_html=True,
 )
 
 # ------------------------------
-# Streamlit App UI
+# Main App UI
 # ------------------------------
-st.title("📚 Interactive MCQ Test Generator")
-st.write("Upload a document (PDF, DOCX, or TXT) to generate an MCQ test. Answer each question to get immediate feedback!")
+st.markdown("<div class='title-container'>Interactive MCQ & Chatbot Generator</div>", unsafe_allow_html=True)
 
-# Upload file
-uploaded_file = st.file_uploader("Choose a file", type=["pdf", "docx", "txt"])
-
-if uploaded_file is not None:
-    if allowed_file(uploaded_file.name):
-        file_bytes = uploaded_file.read()
-        file_obj = BytesIO(file_bytes)
-        text = extract_text(file_obj, uploaded_file.name)
-        if text:
-            st.success("File processed successfully!")
-            st.write("Extracted text preview (first 500 characters):")
-            st.write(text[:500] + "...")
-            
-            # Test options
-            num_questions = st.number_input("Number of MCQs:", min_value=1, max_value=20, value=5)
-            difficulty = st.selectbox("Select Difficulty:", ["Easy", "Medium", "Hard"])
-            
-            if st.button("Generate Test"):
-                with st.spinner("Generating MCQs..."):
-                    mcqs = generate_mcqs(text, num_questions, difficulty)
-                if mcqs:
-                    st.session_state.mcqs = mcqs
-                    st.session_state.current_q = 0
-                    st.session_state.responses = [None] * len(mcqs)
-                    st.success("Test generated! Begin your test below.")
-                else:
-                    st.error("No MCQs were generated. Please try again.")
+if mode == "Document MCQ":
+    st.sidebar.markdown("### Document MCQ Mode")
+    st.sidebar.write("Upload a document to generate an interactive MCQ test.")
+    
+    uploaded_file = st.file_uploader("Upload Document (PDF, DOCX, or TXT)", type=["pdf", "docx", "txt"])
+    
+    if uploaded_file is not None:
+        if allowed_file(uploaded_file.name):
+            file_bytes = uploaded_file.read()
+            file_obj = BytesIO(file_bytes)
+            doc_text = extract_text(file_obj, uploaded_file.name)
+            if doc_text:
+                st.success("Document processed successfully!")
+                st.write("Document preview (first 500 characters):")
+                st.write(doc_text[:500] + "...")
+                num_questions = st.number_input("Number of MCQs:", min_value=1, max_value=20, value=5)
+                if st.button("Generate MCQ Test"):
+                    mcq_list = query_llama3 = None  # Clear any previous state
+                    # Use our function to generate MCQs from document text:
+                    try:
+                        mcq_list = ast.literal_eval(ChatGroq(temperature=0.7, groq_api_key=GROQ_API_KEY, model_name="llama3-70b-8192").invoke([HumanMessage(content=f\"\"\"You are an expert educational assessment generator. Generate a list of multiple-choice questions based on the following document text. Each question must be a Python list of 6 elements: [Question, OptionA, OptionB, OptionC, OptionD, CorrectOption]. Provide only a Python list output.
+Document Text:
+{doc_text}
+\"\"\")]).content)
+                    except Exception as e:
+                        st.error("Error generating MCQs: " + str(e))
+                    if mcq_list and isinstance(mcq_list, list) and len(mcq_list) > 0:
+                        st.session_state.mcqs = mcq_list
+                        st.session_state.total = len(mcq_list)
+                        st.session_state.current_q = 0
+                        st.session_state.score = 0
+                        st.session_state.answers = ["" for _ in range(len(mcq_list))]
+                        st.session_state.done = False
+                        st.success("MCQ Test Generated! Begin the test below.")
+                    else:
+                        st.error("No valid MCQs generated. Please try again.")
+            else:
+                st.error("Could not extract text from the document.")
         else:
-            st.error("Could not extract text from the file.")
-    else:
-        st.error("Invalid file format. Please upload a PDF, DOCX, or TXT file.")
+            st.error("Invalid file format.")
+    
+    # If test is generated, display one question at a time
+    if "mcqs" in st.session_state and st.session_state.get("mcqs") and not st.session_state.get("done", False):
+        current = st.session_state.current_q
+        total = st.session_state.total
+        if current < total:
+            q_data = st.session_state.mcqs[current]
+            # Each question is a list: [Question, OptionA, OptionB, OptionC, OptionD, CorrectOption]
+            st.markdown(f"### Question {current+1} of {total}")
+            st.write(q_data[0])
+            # Prepare options with letter labels
+            option_letters = ["A", "B", "C", "D"]
+            options = [f"{letter}: {q_data[i+1]}" for i, letter in enumerate(option_letters)]
+            user_choice = st.radio("Select your answer:", options, key=f"q{current}_options")
+            if st.button("Submit Answer", key=f"submit_{current}"):
+                selected_letter = user_choice.split(":")[0].strip().upper()
+                st.session_state.answers[current] = selected_letter
+                correct_letter = q_data[-1].strip().upper()
+                if selected_letter == correct_letter:
+                    st.success("Correct Answer! 🎉")
+                    st.session_state.score += 1
+                else:
+                    st.error(f"Incorrect! The correct answer is {correct_letter}.")
+                if current < total - 1:
+                    if st.button("Next Question", key=f"next_{current}"):
+                        st.session_state.current_q += 1
+                        st.experimental_rerun()
+                else:
+                    st.session_state.done = True
+                    st.experimental_rerun()
+    
+    # Final Summary after test completion
+    if "mcqs" in st.session_state and st.session_state.get("done", False):
+        st.markdown("## Test Completed!")
+        st.write(f"Final Score: {st.session_state.score} out of {st.session_state.total}")
+        summary_txt = create_txt_summary(st.session_state.mcqs, st.session_state.answers)
+        st.text_area("Test Summary", summary_txt, height=300)
+        st.download_button("Download Summary as TXT", summary_txt, file_name="mcq_results.txt", mime="text/plain")
+        pdf_bytes = create_pdf_summary(st.session_state.mcqs, st.session_state.answers)
+        st.download_button("Download Summary as PDF", pdf_bytes, file_name="mcq_results.pdf", mime="application/pdf")
+        if st.button("New Test"):
+            st.session_state.clear()
+            st.experimental_rerun()
 
-# If test is generated, show one question at a time
-if "mcqs" in st.session_state and st.session_state.get("mcqs"):
-    current = st.session_state.current_q
-    total = len(st.session_state.mcqs)
-    if current < total:
-        q = st.session_state.mcqs[current]
-        st.markdown(f"### Question {current+1} of {total}")
-        st.write(q.get("question", ""))
-        # Show options with radio buttons (display option letter + text)\n        option_mapping = {}\n        options_display = []\n        for idx, opt in enumerate(q.get(\"options\", [])):\n            letter = chr(65 + idx)  # A, B, C, D\n            option_mapping[letter] = opt\n            options_display.append(f\"{letter}: {opt}\")\n        user_choice = st.radio(\"Select your answer:\", options=list(option_mapping.keys()))\n        if st.button(\"Submit Answer\"):\n            st.session_state.responses[current] = user_choice\n            # Provide immediate feedback\n            correct_letter = q.get(\"correct\", \"\").strip().upper()\n            if user_choice.upper() == correct_letter:\n                st.success(\"Correct Answer! 🎉\")\n            else:\n                st.error(f\"Incorrect! The correct answer is {correct_letter}.\\nExplanation: {q.get('explanation', '')}\")\n            if current < total - 1:\n                if st.button(\"Next Question\"):\n                    st.session_state.current_q += 1\n                    st.experimental_rerun()\n            else:\n                st.success(\"Test Completed!\")\n                # Show final summary\n                score = sum(1 for i in range(total) if st.session_state.responses[i].upper() == st.session_state.mcqs[i].get(\"correct\", \"\").strip().upper())\n                st.markdown(f\"### Final Score: {score} / {total}\")\n                summary_text = create_txt_summary(st.session_state.mcqs, st.session_state.responses)\n                st.text_area(\"Test Summary\", summary_text, height=300)\n                st.download_button(\"Download Summary as TXT\", summary_text, file_name=\"mcq_results.txt\", mime=\"text/plain\")\n                pdf_bytes = create_pdf_summary(st.session_state.mcqs, st.session_state.responses)\n                st.download_button(\"Download Summary as PDF\", pdf_bytes, file_name=\"mcq_results.pdf\", mime=\"application/pdf\")\n    else:\n        st.write(\"No more questions.\")\n\n# Helper function to create text summary (used in final summary download)\ndef create_txt_summary(mcqs, responses):\n    lines = []\n    score = 0\n    for i, (q, ans) in enumerate(zip(mcqs, responses)):\n        correct = q.get(\"correct\", \"\").strip().upper()\n        is_correct = (ans.strip().upper() == correct)\n        if is_correct:\n            score += 1\n        lines.append(f\"Q{i+1}: {q.get('question', '')}\")\n        for idx, opt in enumerate(q.get('options', [])):\n            letter = chr(65+idx)\n            lines.append(f\"   {letter}: {opt}\")\n        lines.append(f\"Your Answer: {ans} | Correct Answer: {correct}\")\n        lines.append(f\"Explanation: {q.get('explanation', '')}\")\n        lines.append(\"--------------------------------------\")\n    lines.insert(0, f\"Final Score: {score} / {len(mcqs)}\\n\")\n    return \"\\n\".join(lines)\n"}
+elif mode == "Chatbot":
+    st.sidebar.markdown("### Chatbot Mode")
+    st.sidebar.write("Ask any educational question or discuss topics.")
+    if "chat_history" not in st.session_state:
+        st.session_state.chat_history = [
+            {"role": "system", "content": "You are a helpful educational assistant."}
+        ]
+    user_input = st.text_input("Your message:")
+    if st.button("Send") and user_input.strip() != "":
+        st.session_state.chat_history.append({"role": "user", "content": user_input})
+        with st.spinner("Assistant is typing..."):
+            try:
+                response = chat.invoke([HumanMessage(content=user_input)])
+            except Exception as e:
+                response = type("obj", (), {"content": f"Error: {str(e)}"})
+        st.session_state.chat_history.append({"role": "assistant", "content": response.content})
+    st.markdown("---")
+    st.markdown("### Conversation:")
+    for msg in st.session_state.chat_history:
+        if msg["role"] == "assistant":
+            st.markdown(f"<div style='background:#333333; padding:10px; border-radius:8px; margin-bottom:10px; max-width:75%;'>{msg['content']}</div>", unsafe_allow_html=True)
+        else:
+            st.markdown(f"<div style='background:#1E88E5; color:#fff; padding:10px; border-radius:8px; margin-bottom:10px; max-width:75%; text-align:right;'>{msg['content']}</div>", unsafe_allow_html=True)
