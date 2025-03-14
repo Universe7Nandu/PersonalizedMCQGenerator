@@ -17,10 +17,10 @@ from langchain.memory import ConversationBufferMemory
 nest_asyncio.apply()
 
 ###############################################################################
-# HELPER: Rerun Function
+# HELPER: Rerun the app
 ###############################################################################
 def rerun_app():
-    # Try using experimental_rerun; if not available, force a stop (which causes a re-run in some cases)
+    # Use experimental_rerun if available, else stop the script (which in some cases triggers a rerun)
     if hasattr(st, "experimental_rerun"):
         st.experimental_rerun()
     else:
@@ -31,7 +31,7 @@ def rerun_app():
 ###############################################################################
 st.set_page_config(page_title="Adaptive MCQ & Chatbot", layout="wide")
 
-# Set your Groq API key (for demo; in production use secure methods)
+# Set your Groq API key (for demo purposes; use secure methods in production)
 os.environ["GROQ_API_KEY"] = "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"
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
@@ -44,6 +44,7 @@ chat = ChatGroq(temperature=0.7, model_name="llama3-70b-8192", groq_api_key=GROQ
 # UTILITY FUNCTIONS
 ###############################################################################
 def extract_text(file_obj, filename):
+    """Extract text from PDF, DOCX, or TXT files."""
     ext = filename.rsplit('.', 1)[1].lower()
     if ext == "pdf":
         try:
@@ -77,17 +78,17 @@ def create_pdf_summary(mcqs, user_answers):
     pdf.ln(5)
     for i, (mcq, ans) in enumerate(zip(mcqs, user_answers)):
         question = mcq[0]
-        correct_letter = mcq[-2].strip().upper()  # correct answer
+        correct_letter = mcq[-2].strip().upper()  # correct answer is second-to-last element
         explanation = mcq[-1]
         selected = ans.strip().upper()
         if selected == correct_letter:
             score += 1
         pdf.multi_cell(0, 10, f"Q{i+1}: {question}")
-        if len(mcq) == 7:  # 4-option question
+        if len(mcq) == 7:
             letters = ["A", "B", "C", "D"]
             for idx, opt in enumerate(mcq[1:5]):
                 pdf.multi_cell(0, 10, f"{letters[idx]}) {opt}")
-        elif len(mcq) == 5:  # True/False question
+        elif len(mcq) == 5:
             pdf.multi_cell(0, 10, f"True) {mcq[1]}")
             pdf.multi_cell(0, 10, f"False) {mcq[2]}")
         pdf.multi_cell(0, 10, f"Your Answer: {selected} | Correct: {correct_letter}")
@@ -125,7 +126,7 @@ def create_txt_summary(mcqs, user_answers):
 
 def query_chatbot(user_query):
     system_prompt = """
-System Prompt: You are an expert educational assistant. Provide clear, concise, and helpful answers.
+System Prompt: You are an expert educational assistant. Provide clear and concise answers.
 """
     past = st.session_state.memory.load_memory_variables({}).get("chat_history", [])
     messages = [
@@ -141,18 +142,17 @@ System Prompt: You are an expert educational assistant. Provide clear, concise, 
 
 async def async_generate_mcqs(doc_text, difficulty, num_questions):
     system_prompt = f"""
-System Prompt: You are an advanced educational assessment generator for an enterprise-level adaptive learning system.
+System Prompt: You are an advanced educational assessment generator.
 Your tasks:
 1. Analyze the provided text to generate relevant MCQs at {difficulty} difficulty.
-2. For each question:
-   - If it's a 4-option question, output [Question, A, B, C, D, Ans, Explanation].
-   - If it's a True/False question, output [Question, True, False, Ans, Explanation].
-3. 'Ans' is the correct answer (A/B/C/D or True/False).
-4. Explanation is a brief reasoning for the correct answer.
-Output only a Python list with no additional commentary.
+2. For each question, output in one of these formats:
+   - 4-option: [Question, A, B, C, D, Ans, Explanation]
+   - True/False: [Question, True, False, Ans, Explanation]
+3. 'Ans' is the correct answer.
+4. Output only a Python list with no extra commentary.
 """
     user_prompt = f"""
-Generate exactly {num_questions} MCQs from this text:
+Generate exactly {num_questions} MCQs from the text below:
 
 \"\"\"{doc_text}\"\"\"
 
@@ -211,7 +211,7 @@ st.markdown("""
 <style>
 body {
     background: #121212;
-    color: #E0E0E0 !important;
+    color: #E0E0E0;
     font-family: 'Segoe UI', sans-serif;
 }
 .block-container {
@@ -282,156 +282,130 @@ for msg in st.session_state.chat_history:
         st.sidebar.markdown(f"<div class='chat-bubble user-bubble'>{msg['content']}</div>", unsafe_allow_html=True)
 
 ###############################################################################
-# MAIN APP
+# MAIN APP: Mode Selection
 ###############################################################################
-st.title("Adaptive MCQ Generator & Chatbot")
-st.write("A scalable AI system that transforms educational content into engaging MCQs with adaptive difficulty and detailed performance insights.")
-
 mode_selection = st.sidebar.radio("Select Mode", ["MCQ Generator", "Chatbot"])
 
-# ------------------- MCQ GENERATOR MODE -------------------
+###############################################################################
+# MCQ GENERATOR MODE
+###############################################################################
 if mode_selection == "MCQ Generator":
-    uploaded_file = st.file_uploader("Upload Document (PDF, DOCX, or TXT)", type=["pdf", "docx", "txt"])
-    if uploaded_file:
-        file_bytes = uploaded_file.read()
-        file_obj = BytesIO(file_bytes)
-        doc_text = extract_text(file_obj, uploaded_file.name)
-        if doc_text:
-            st.success("Document processed successfully!")
-            st.write("**Document Preview** (first 500 characters):")
-            st.write(doc_text[:500] + "...")
-            
-            difficulty = st.selectbox("Select Difficulty", ["Easy", "Moderate", "Hard"])
-            num_questions = st.number_input("Number of MCQs to generate", min_value=1, max_value=20, value=5)
-            
-            if "mcqs" not in st.session_state:
-                st.session_state.mcqs = []
-            if "current_q" not in st.session_state:
-                st.session_state.current_q = 0
-            if "user_answers" not in st.session_state:
-                st.session_state.user_answers = []
-            if "done" not in st.session_state:
-                st.session_state.done = False
-            if "score" not in st.session_state:
-                st.session_state.score = 0
-            
-            if st.button("Generate MCQs"):
-                st.session_state.mcqs = generate_mcqs(doc_text, difficulty, num_questions)
-                st.session_state.current_q = 0
-                st.session_state.user_answers = ["" for _ in range(len(st.session_state.mcqs))]
-                st.session_state.done = False
-                st.session_state.score = 0
-                if st.session_state.mcqs:
-                    st.success(f"Generated {len(st.session_state.mcqs)} MCQs. Scroll down to begin!")
+    st.title("Adaptive MCQ Generator")
+    # Topic input and generate button (only if not already generated)
+    if "topic" not in st.session_state or st.session_state.topic == "":
+        topic_input = st.text_input("Enter Topic:")
+        if st.button("Generate MCQs") and topic_input:
+            st.session_state.topic = topic_input
+            try:
+                questions_str = query_llama3(topic_input)
+                st.session_state.questions = ast.literal_eval(questions_str)
+            except Exception as e:
+                st.error("Error generating questions: " + str(e))
+            if st.session_state.questions:
+                st.success(f"Generated {len(st.session_state.questions)} MCQs. Please answer them below.")
+            else:
+                st.warning("No questions generated.")
+            rerun_app()
+    else:
+        # Initialize test session state if not already
+        if "current_question" not in st.session_state:
+            st.session_state.current_question = 0
+        if "score" not in st.session_state:
+            st.session_state.score = 0
+        if "answers" not in st.session_state:
+            st.session_state.answers = [""] * len(st.session_state.questions)
+        if "done" not in st.session_state:
+            st.session_state.done = False
+
+        # If test is not completed, show the current question
+        if not st.session_state.done:
+            idx = st.session_state.current_question
+            total = len(st.session_state.questions)
+            if idx < total:
+                mcq = st.session_state.questions[idx]
+                st.markdown(f"### Question {idx+1} of {total}")
+                st.markdown(f"**{mcq[0]}**")
+                # Assume MCQs are either 4-option ([Q, A, B, C, D, Ans, Explanation]) or True/False ([Q, True, False, Ans, Explanation])
+                if len(mcq) == 7:
+                    letters = ["A", "B", "C", "D"]
+                    options = [f"{letters[i]}) {mcq[i+1]}" for i in range(4)]
+                elif len(mcq) == 5:
+                    options = [f"True) {mcq[1]}", f"False) {mcq[2]}"]
                 else:
-                    st.warning("No MCQs generated. Try adjusting your content or question count.")
-            
-            # Display one question at a time
-            if st.session_state.mcqs and not st.session_state.done:
-                idx = st.session_state.current_q
-                total = len(st.session_state.mcqs)
-                if idx < total:
-                    mcq = st.session_state.mcqs[idx]
-                    st.markdown(f"### Question {idx+1} of {total}")
-                    st.markdown(f"**{mcq[0]}**")
-                    
-                    # Determine question type:
-                    # 4-option: [Q, A, B, C, D, Ans, Explanation] or T/F: [Q, True, False, Ans, Explanation]
-                    if len(mcq) == 7:
-                        letters = ["A", "B", "C", "D"]
-                        opts = [f"{letters[i]}) {mcq[i+1]}" for i in range(4)]
-                    elif len(mcq) == 5:
-                        opts = [f"True) {mcq[1]}", f"False) {mcq[2]}"]
-                    else:
-                        st.warning("Invalid MCQ format. Skipping this question.")
-                        st.session_state.current_q += 1
-                        rerun_app()
-                    
-                    if st.session_state.user_answers[idx] == "":
-                        st.session_state.user_answers[idx] = ""
-                    
-                    user_choice = st.radio("Select your answer:", opts, key=f"radio_{idx}")
-                    
-                    def submit_callback():
-                        selected_letter = user_choice.split(")")[0].strip().upper()
-                        st.session_state.user_answers[idx] = selected_letter
-                        correct_letter = mcq[-2].strip().upper()
-                        explanation = mcq[-1]
-                        if selected_letter == correct_letter:
-                            st.success("Correct Answer! 🎉")
-                            st.session_state.score += 1
-                        else:
-                            st.error(f"Incorrect! The correct answer is {correct_letter}.")
-                            st.info(f"Explanation: {explanation}")
-                    
-                    st.button("Submit Answer", key=f"submit_{idx}", on_click=submit_callback)
-                    
-                    def next_callback():
-                        st.session_state.current_q += 1
-                        rerun_app()
-                    
-                    if idx < total - 1:
-                        st.button("Next Question", key=f"next_{idx}", on_click=next_callback)
-                    else:
-                        def finish_callback():
-                            st.session_state.done = True
-                            rerun_app()
-                        st.button("Finish Test", key="finish", on_click=finish_callback)
-            
-            if st.session_state.mcqs and st.session_state.done:
-                st.markdown("## Test Completed!")
-                total_q = len(st.session_state.mcqs)
-                st.write(f"**Final Score:** {st.session_state.score} / {total_q}")
-                summary_txt = create_txt_summary(st.session_state.mcqs, st.session_state.user_answers)
-                st.text_area("Test Summary", summary_txt, height=300)
-                st.download_button("Download Summary as TXT", summary_txt, file_name="mcq_results.txt", mime="text/plain")
-                pdf_bytes = create_pdf_summary(st.session_state.mcqs, st.session_state.user_answers)
-                st.download_button("Download Summary as PDF", pdf_bytes, file_name="mcq_results.pdf", mime="application/pdf")
-                
-                def new_test_callback():
-                    for key in ["mcqs", "current_q", "user_answers", "done", "score"]:
-                        st.session_state.pop(key, None)
+                    st.error("Invalid question format.")
+                    st.session_state.current_question += 1
                     rerun_app()
                 
-                st.button("New Test", on_click=new_test_callback)
+                # Display options
+                selected = st.radio("Select your answer:", options, key=f"q_{idx}")
                 
-# ------------------- CHATBOT MODE -------------------
+                if st.button("Submit Answer", key=f"submit_{idx}"):
+                    # Record answer and check
+                    ans = selected.split(")")[0].strip().upper()
+                    st.session_state.answers[idx] = ans
+                    correct = mcq[-2].strip().upper()
+                    if ans == correct:
+                        st.success("Correct Answer! 🎉")
+                        st.session_state.score += 1
+                    else:
+                        st.error(f"Incorrect. Correct answer: {correct}")
+                        st.info(f"Explanation: {mcq[-1]}")
+                    # Automatically move to next question after submission
+                    st.session_state.current_question += 1
+                    rerun_app()
+            else:
+                st.session_state.done = True
+                rerun_app()
+        
+        # When test is completed, show summary
+        if st.session_state.done:
+            st.markdown("## Test Completed!")
+            total_q = len(st.session_state.questions)
+            st.write(f"**Final Score:** {st.session_state.score} / {total_q}")
+            summary = create_txt_summary(st.session_state.questions, st.session_state.answers)
+            st.text_area("Test Summary", summary, height=300)
+            st.download_button("Download Summary as TXT", summary, file_name="mcq_results.txt", mime="text/plain")
+            pdf_summary = create_pdf_summary(st.session_state.questions, st.session_state.answers)
+            st.download_button("Download Summary as PDF", pdf_summary, file_name="mcq_results.pdf", mime="application/pdf")
+            if st.button("New Test"):
+                for key in ["topic", "questions", "current_question", "score", "answers", "done"]:
+                    st.session_state.pop(key, None)
+                rerun_app()
+
+###############################################################################
+# CHATBOT MODE
+###############################################################################
 else:
-    st.write("## Educational Chatbot")
-    st.write("Ask any educational questions or discuss topics. Your chat history is shown in the sidebar.")
-    
+    st.title("Educational Chatbot")
+    st.write("Ask any educational questions. Your chat history appears in the sidebar.")
     if "chat_history" not in st.session_state:
         st.session_state.chat_history = [{"role": "assistant", "content": "You are a helpful educational assistant."}]
-    
     with st.form("chat_form"):
-        user_input = st.text_input("Your message:")
-        send_submitted = st.form_submit_button("Send")
-    
-    if send_submitted and user_input.strip():
-        st.session_state.chat_history.append({"role": "user", "content": user_input})
+        user_msg = st.text_input("Your message:")
+        send = st.form_submit_button("Send")
+    if send and user_msg.strip():
+        st.session_state.chat_history.append({"role": "user", "content": user_msg})
         with st.spinner("Assistant is typing..."):
-            response_content = query_chatbot(user_input)
-        st.session_state.chat_history.append({"role": "assistant", "content": response_content})
-    
+            reply = query_chatbot(user_msg)
+        st.session_state.chat_history.append({"role": "assistant", "content": reply})
     st.markdown("---")
     st.write("### Conversation:")
-    for msg in st.session_state.chat_history:
-        if msg["role"] == "assistant":
-            st.markdown(f"<div class='chat-bubble assistant-bubble'>{msg['content']}</div>", unsafe_allow_html=True)
+    for m in st.session_state.chat_history:
+        if m["role"] == "assistant":
+            st.markdown(f"<div class='chat-bubble assistant-bubble'>{m['content']}</div>", unsafe_allow_html=True)
         else:
-            st.markdown(f"<div class='chat-bubble user-bubble'>{msg['content']}</div>", unsafe_allow_html=True)
-    
-    col1, col2, col3 = st.columns([1, 1, 1])
+            st.markdown(f"<div class='chat-bubble user-bubble'>{m['content']}</div>", unsafe_allow_html=True)
+    col1, col2, col3 = st.columns(3)
     with col1:
         if st.button("Download Chat as TXT"):
-            txt_data = chat_to_txt(st.session_state.chat_history)
-            st.download_button("Save Chat (TXT)", txt_data, file_name="chat_history.txt", mime="text/plain", key="download_txt")
+            chat_txt = chat_to_txt(st.session_state.chat_history)
+            st.download_button("Save Chat (TXT)", chat_txt, file_name="chat_history.txt", mime="text/plain", key="chat_txt")
     with col2:
         if st.button("Download Chat as PDF"):
-            pdf_data = chat_to_pdf(st.session_state.chat_history)
-            st.download_button("Save Chat (PDF)", pdf_data, file_name="chat_history.pdf", mime="application/pdf", key="download_pdf")
+            chat_pdf = chat_to_pdf(st.session_state.chat_history)
+            st.download_button("Save Chat (PDF)", chat_pdf, file_name="chat_history.pdf", mime="application/pdf", key="chat_pdf")
     with col3:
-        reset_confirm = st.checkbox("Confirm Reset Chat")
-        if st.button("Reset Chat", key="reset_chat") and reset_confirm:
+        reset_chk = st.checkbox("Confirm Reset Chat")
+        if st.button("Reset Chat", key="reset_chat") and reset_chk:
             st.session_state.chat_history = [{"role": "assistant", "content": "You are a helpful educational assistant."}]
             rerun_app()
