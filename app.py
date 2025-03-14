@@ -157,8 +157,8 @@ def generate_mcqs(content, difficulty, num_questions):
     
     try:
         # Extract and validate the Python list of questions
-        if "```
-            code_block = result.split("```python")[1].split("```
+        if "
+            code_block = result.split("python")[1].split("
             data = ast.literal_eval(code_block)
         else:
             data = ast.literal_eval(result)
