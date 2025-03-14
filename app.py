@@ -9,19 +9,29 @@ from io import BytesIO
 from fpdf import FPDF
 from langchain_groq import ChatGroq
 
-# Import required modules from langchain (ensure version >= 0.3.20 is installed)
+# Import langchain modules (ensure langchain>=0.3.20 is installed)
 from langchain.schema import HumanMessage, SystemMessage
 from langchain.memory import ConversationBufferMemory
 
-# Allow asyncio in Streamlit
+# Allow asyncio to run in Streamlit
 nest_asyncio.apply()
+
+###############################################################################
+# HELPER: Rerun Function
+###############################################################################
+def rerun_app():
+    # Try using experimental_rerun; if not available, force a stop (which causes a re-run in some cases)
+    if hasattr(st, "experimental_rerun"):
+        st.experimental_rerun()
+    else:
+        st.stop()
 
 ###############################################################################
 # CONFIGURATION & SETUP
 ###############################################################################
 st.set_page_config(page_title="Adaptive MCQ & Chatbot", layout="wide")
 
-# Set your Groq API key (for demo; use secure methods for production)
+# Set your Groq API key (for demo; in production use secure methods)
 os.environ["GROQ_API_KEY"] = "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"
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
@@ -34,7 +44,6 @@ chat = ChatGroq(temperature=0.7, model_name="llama3-70b-8192", groq_api_key=GROQ
 # UTILITY FUNCTIONS
 ###############################################################################
 def extract_text(file_obj, filename):
-    """Extract text from PDF, DOCX, or TXT."""
     ext = filename.rsplit('.', 1)[1].lower()
     if ext == "pdf":
         try:
@@ -60,7 +69,6 @@ def extract_text(file_obj, filename):
         return ""
 
 def create_pdf_summary(mcqs, user_answers):
-    """Generate a PDF summary of MCQ results."""
     score = 0
     pdf = FPDF()
     pdf.add_page()
@@ -69,17 +77,17 @@ def create_pdf_summary(mcqs, user_answers):
     pdf.ln(5)
     for i, (mcq, ans) in enumerate(zip(mcqs, user_answers)):
         question = mcq[0]
-        correct_letter = mcq[-2].strip().upper()  # second-to-last element: correct answer
+        correct_letter = mcq[-2].strip().upper()  # correct answer
         explanation = mcq[-1]
         selected = ans.strip().upper()
         if selected == correct_letter:
             score += 1
         pdf.multi_cell(0, 10, f"Q{i+1}: {question}")
-        if len(mcq) == 7:
+        if len(mcq) == 7:  # 4-option question
             letters = ["A", "B", "C", "D"]
             for idx, opt in enumerate(mcq[1:5]):
                 pdf.multi_cell(0, 10, f"{letters[idx]}) {opt}")
-        elif len(mcq) == 5:
+        elif len(mcq) == 5:  # True/False question
             pdf.multi_cell(0, 10, f"True) {mcq[1]}")
             pdf.multi_cell(0, 10, f"False) {mcq[2]}")
         pdf.multi_cell(0, 10, f"Your Answer: {selected} | Correct: {correct_letter}")
@@ -92,7 +100,6 @@ def create_pdf_summary(mcqs, user_answers):
     return pdf.output(dest="S").encode("latin1")
 
 def create_txt_summary(mcqs, user_answers):
-    """Generate a TXT summary of MCQ results."""
     lines = []
     score = 0
     for i, (mcq, ans) in enumerate(zip(mcqs, user_answers)):
@@ -117,7 +124,6 @@ def create_txt_summary(mcqs, user_answers):
     return "\n".join(lines)
 
 def query_chatbot(user_query):
-    """Query the chatbot using conversation memory."""
     system_prompt = """
 System Prompt: You are an expert educational assistant. Provide clear, concise, and helpful answers.
 """
@@ -134,12 +140,6 @@ System Prompt: You are an expert educational assistant. Provide clear, concise, 
         return f"Error: {str(e)}"
 
 async def async_generate_mcqs(doc_text, difficulty, num_questions):
-    """
-    Generate MCQs from the document text.
-    For 4-option questions, output [Question, A, B, C, D, Ans, Explanation] (7 elements).
-    For True/False questions, output [Question, True, False, Ans, Explanation] (5 elements).
-    Output only a Python list.
-    """
     system_prompt = f"""
 System Prompt: You are an advanced educational assessment generator for an enterprise-level adaptive learning system.
 Your tasks:
@@ -205,7 +205,7 @@ def chat_to_pdf(chat_history):
     return pdf.output(dest="S").encode("latin1")
 
 ###############################################################################
-# CUSTOM CSS FOR A MODERN, DARK, COLORFUL UI
+# CUSTOM CSS FOR DARK, PROFESSIONAL UI
 ###############################################################################
 st.markdown("""
 <style>
@@ -336,8 +336,7 @@ if mode_selection == "MCQ Generator":
                     st.markdown(f"**{mcq[0]}**")
                     
                     # Determine question type:
-                    # 4-option: [Q, A, B, C, D, Ans, Explanation]
-                    # T/F: [Q, True, False, Ans, Explanation]
+                    # 4-option: [Q, A, B, C, D, Ans, Explanation] or T/F: [Q, True, False, Ans, Explanation]
                     if len(mcq) == 7:
                         letters = ["A", "B", "C", "D"]
                         opts = [f"{letters[i]}) {mcq[i+1]}" for i in range(4)]
@@ -346,15 +345,13 @@ if mode_selection == "MCQ Generator":
                     else:
                         st.warning("Invalid MCQ format. Skipping this question.")
                         st.session_state.current_q += 1
-                        st.experimental_rerun()
+                        rerun_app()
                     
-                    # Ensure an answer placeholder
                     if st.session_state.user_answers[idx] == "":
                         st.session_state.user_answers[idx] = ""
                     
                     user_choice = st.radio("Select your answer:", opts, key=f"radio_{idx}")
                     
-                    # Submit Answer callback
                     def submit_callback():
                         selected_letter = user_choice.split(")")[0].strip().upper()
                         st.session_state.user_answers[idx] = selected_letter
@@ -369,21 +366,18 @@ if mode_selection == "MCQ Generator":
                     
                     st.button("Submit Answer", key=f"submit_{idx}", on_click=submit_callback)
                     
-                    # Next Question callback
                     def next_callback():
                         st.session_state.current_q += 1
-                        st.experimental_rerun()
+                        rerun_app()
                     
-                    # Show "Next" or "Finish" button
                     if idx < total - 1:
                         st.button("Next Question", key=f"next_{idx}", on_click=next_callback)
                     else:
                         def finish_callback():
                             st.session_state.done = True
-                            st.experimental_rerun()
+                            rerun_app()
                         st.button("Finish Test", key="finish", on_click=finish_callback)
             
-            # Final summary
             if st.session_state.mcqs and st.session_state.done:
                 st.markdown("## Test Completed!")
                 total_q = len(st.session_state.mcqs)
@@ -397,14 +391,14 @@ if mode_selection == "MCQ Generator":
                 def new_test_callback():
                     for key in ["mcqs", "current_q", "user_answers", "done", "score"]:
                         st.session_state.pop(key, None)
-                    st.experimental_rerun()
+                    rerun_app()
                 
                 st.button("New Test", on_click=new_test_callback)
                 
 # ------------------- CHATBOT MODE -------------------
 else:
     st.write("## Educational Chatbot")
-    st.write("Ask any educational questions or discuss topics. Your chat history is displayed in the sidebar.")
+    st.write("Ask any educational questions or discuss topics. Your chat history is shown in the sidebar.")
     
     if "chat_history" not in st.session_state:
         st.session_state.chat_history = [{"role": "assistant", "content": "You are a helpful educational assistant."}]
@@ -440,4 +434,4 @@ else:
         reset_confirm = st.checkbox("Confirm Reset Chat")
         if st.button("Reset Chat", key="reset_chat") and reset_confirm:
             st.session_state.chat_history = [{"role": "assistant", "content": "You are a helpful educational assistant."}]
-            st.experimental_rerun()
+            rerun_app()
