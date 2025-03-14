@@ -54,6 +54,8 @@ if "initialized" not in st.session_state:
     st.session_state.mcq_test_id = None
     st.session_state.file_text = ""
     st.session_state.topics = []
+    st.session_state.timer_duration = 300  # example: 5 minutes
+    st.session_state.test_start_time = time.time()
 
 # Set your Groq API key
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "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")
@@ -61,6 +63,7 @@ os.environ["GROQ_API_KEY"] = GROQ_API_KEY
 
 # Initialize chat model
 chat = ChatGroq(temperature=0.7, model_name="llama3-70b-8192", groq_api_key=GROQ_API_KEY)
+
 def load_css():
     return """
     <style>
@@ -108,17 +111,40 @@ def load_css():
         border-bottom-left-radius: 0.2rem;
         margin-right: 2rem;
     }
-    
-    /* Additional styling... */
     </style>
     """
+
+def extract_text(uploaded_file, filename):
+    """Extract text from PDF, DOCX, or TXT files."""
+    if filename.endswith('.pdf'):
+        text = ""
+        with pdfplumber.open(uploaded_file) as pdf:
+            for page in pdf.pages:
+                page_text = page.extract_text()
+                if page_text:
+                    text += page_text
+        return text
+    elif filename.endswith('.docx'):
+        doc = docx.Document(uploaded_file)
+        text = "\n".join([para.text for para in doc.paragraphs])
+        return text
+    elif filename.endswith('.txt'):
+        return uploaded_file.getvalue().decode("utf-8")
+    else:
+        return ""
+
+def format_time(seconds):
+    """Format seconds as MM:SS."""
+    minutes, sec = divmod(int(seconds), 60)
+    return f"{minutes:02d}:{sec:02d}"
+
 def render_sidebar():
     with st.sidebar:
-        st.sidebar.image("https://img.icons8.com/clouds/100/000000/brain.png", width=80)
-        st.sidebar.title("EduMind AI")
+        st.image("https://img.icons8.com/clouds/100/000000/brain.png", width=80)
+        st.title("EduMind AI")
         
         # New Chat button
-        if st.sidebar.button("New Chat", key="new_chat"):
+        if st.button("New Chat", key="new_chat"):
             st.session_state.chat_history = []
             st.session_state.current_chat_id = str(uuid.uuid4())
             st.session_state.all_chats[st.session_state.current_chat_id] = {
@@ -128,26 +154,26 @@ def render_sidebar():
             }
             st.session_state.memory.clear()
             st.session_state.show_welcome = True
-            rerun_app()
+            st.experimental_rerun()
         
         # Mode selection
-        st.sidebar.markdown("### Mode")
-        mode = st.sidebar.radio(
+        st.markdown("### Mode")
+        mode = st.radio(
             "Select Mode:",
             ["MCQ Generator", "Educational Chatbot"],
             key="mode_selection"
         )
         
-        # Chat history section
-        st.sidebar.markdown("### Chat History")
-        if len(st.session_state.all_chats) > 0:
+        # Chat history section (basic implementation)
+        st.markdown("### Chat History")
+        if st.session_state.all_chats:
             for chat_id, chat_data in sorted(
                 st.session_state.all_chats.items(), 
                 key=lambda x: x[1]["created_at"], 
                 reverse=True
             ):
-                # Display chat history entries
-                # Additional implementation details...
+                st.write(f"{chat_data['created_at'].strftime('%Y-%m-%d %H:%M:%S')} - {chat_data['title']}")
+
 def generate_mcqs(content, difficulty, num_questions):
     """Generate MCQs synchronously by wrapping the async function."""
     loop = asyncio.new_event_loop()
@@ -157,8 +183,8 @@ def generate_mcqs(content, difficulty, num_questions):
     
     try:
         # Extract and validate the Python list of questions
-        if "
-            code_block = result.split("python")[1].split("
+        if "```python" in result:
+            code_block = result.split("```python")[1].split("```")[0]
             data = ast.literal_eval(code_block)
         else:
             data = ast.literal_eval(result)
@@ -172,27 +198,42 @@ def generate_mcqs(content, difficulty, num_questions):
             if not isinstance(q, list):
                 continue
                 
-            # Check if it's a 4-option MCQ or True/False
-            if len(q) == 7:  # 4-option MCQ
-                validated_questions.append(q)
-            elif len(q) == 5:  # True/False
+            # Check for 4-option MCQ (list length 7) or True/False (list length 5)
+            if len(q) == 7 or len(q) == 5:
                 validated_questions.append(q)
         
         return validated_questions[:num_questions]
     except Exception as e:
         st.error(f"Error parsing MCQ output: {e}")
         return []
+
+async def async_generate_mcqs(content, difficulty, num_questions):
+    """Placeholder async function to simulate MCQ generation via an LLM."""
+    await asyncio.sleep(1)  # Simulate processing time
+    # For demonstration, return a dummy list of questions as a string.
+    dummy_questions = [
+        ["What is the capital of France?", "Berlin", "London", "Paris", "Rome", "C", "Paris is the capital of France."],
+        ["Which planet is known as the Red Planet?", "Earth", "Mars", "Jupiter", "Saturn", "B", "Mars is known as the Red Planet."]
+    ]
+    # Multiply the list to ensure we have enough questions
+    questions = dummy_questions * ((num_questions // len(dummy_questions)) + 1)
+    return str(questions)
+
 def render_mcq_generator():
     st.title("MCQ Generator")
     
-    # MCQ generator form (when no test is in progress)
     st.write("Create a new MCQ test by entering a topic, uploading a document, or pasting text.")
     
     method_tabs = st.tabs(["Enter Topic", "Upload Document", "Paste Text"])
     
-    with method_tabs:
-        topic = st.text_input("Enter a topic for your MCQ test:", 
-                             placeholder="e.g., Python Programming, World War II, Organic Chemistry")
+    topic = ""
+    text_content = ""
+    
+    with method_tabs[0]:
+        topic = st.text_input(
+            "Enter a topic for your MCQ test:", 
+            placeholder="e.g., Python Programming, World War II, Organic Chemistry"
+        )
         if topic:
             st.session_state.mcq_topic = topic
     
@@ -200,19 +241,47 @@ def render_mcq_generator():
         uploaded_file = st.file_uploader("Upload a document:", type=["pdf", "docx", "txt"])
         if uploaded_file:
             with st.spinner("Extracting text..."):
-                st.session_state.file_text = extract_text(uploaded_file, uploaded_file.name)
-                st.success(f"Successfully extracted {len(st.session_state.file_text)} characters.")
+                extracted = extract_text(uploaded_file, uploaded_file.name)
+                st.session_state.file_text = extracted
+                st.success(f"Successfully extracted {len(extracted)} characters.")
             
-            # Show a preview of the extracted text
             with st.expander("Preview extracted text"):
-                st.text(st.session_state.file_text[:1000] + "..." if len(st.session_state.file_text) > 1000 else st.session_state.file_text)
+                preview = extracted if len(extracted) < 1000 else extracted[:1000] + "..."
+                st.text(preview)
     
-    with method_tabs:
-        text_area = st.text_area("Paste your text content:", height=200, 
-                               placeholder="Paste educational content here...")
-        if text_area:
-            st.session_state.file_text = text_area
-            st.write(f"Character count: {len(text_area)}")
+    with method_tabs[2]:
+        text_content = st.text_area(
+            "Paste your text content:", 
+            height=200, 
+            placeholder="Paste educational content here..."
+        )
+        if text_content:
+            st.session_state.file_text = text_content
+            st.write(f"Character count: {len(text_content)}")
+    
+    if st.button("Generate MCQs"):
+        content = st.session_state.mcq_topic if st.session_state.mcq_topic else st.session_state.file_text
+        if not content:
+            st.error("Please enter a topic or provide text content.")
+        else:
+            with st.spinner("Generating MCQs..."):
+                mcqs = generate_mcqs(content, st.session_state.default_difficulty, st.session_state.default_num_questions)
+                st.session_state.mcq_questions = mcqs
+                st.session_state.mcq_answers = [""] * len(mcqs)
+            st.success("MCQs generated successfully!")
+            
+            # Render each MCQ question and options using radio buttons
+            for idx, mcq in enumerate(st.session_state.mcq_questions):
+                st.markdown(f"### Question {idx+1}: {mcq[0]}")
+                options = list(zip(["A", "B", "C", "D"], mcq[1:5]))
+                selected = st.radio("Select an option:", options=[opt[0] for opt in options], key=f"q_{idx}")
+                st.write(f"Selected Option: {selected}")
+            
+            # Placeholder button for submitting answers
+            if st.button("Submit Answers"):
+                st.write("Results processing would occur here.")
+                # You could call create_interactive_mcq_results() and display the output
+
 def suggest_topics(text):
     """Use LLM to suggest topics from text content."""
     system_prompt = """
@@ -231,44 +300,7 @@ def suggest_topics(text):
     except Exception as e:
         st.error(f"Error suggesting topics: {e}")
         return ["General Knowledge"]
-# Display progress bar and counter
-st.markdown(f"""
-<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
-    <span>Question {idx + 1} of {total}</span>
-    <span>{progress_pct:.0f}% Complete</span>
-</div>
-<div class="progress-container">
-    <div class="progress-bar" style="width: {progress_pct}%;"></div>
-</div>
-""", unsafe_allow_html=True)
 
-# Timer display if enabled
-if "test_start_time" in st.session_state and "timer_duration" in st.session_state:
-    elapsed = time.time() - st.session_state.test_start_time
-    remaining = max(0, st.session_state.timer_duration - elapsed)
-    
-    if remaining <= 0:
-        st.warning("Time's up! Please complete your answers.")
-    else:
-        st.markdown(f"""
-        <div class="timer">⏰ Time Remaining: {format_time(remaining)}</div>
-        """, unsafe_allow_html=True)
-
-# Display question and options
-st.markdown(f"<h3 class='mcq-question'>{mcq}</h3>", unsafe_allow_html=True)
-
-# Option selection interface
-for letter, text in options:
-    key = f"q_{idx}_{letter}"
-    col1, col2 = st.columns([1])
-    
-    with col1:
-        if st.checkbox("", key=key, value=st.session_state.mcq_answers[idx] == letter):
-            selected_option = letter
-            st.session_state.mcq_answers[idx] = letter
-    
-    with col2:
-        st.markdown(f"<div class='mcq-option {'selected' if st.session_state.mcq_answers[idx] == letter else ''}'><strong>{letter}.</strong> {text}</div>", unsafe_allow_html=True)
 def create_interactive_mcq_results(mcqs, user_answers, topic, time_taken=None):
     """Generate HTML-formatted interactive MCQ results for display in Streamlit."""
     score = 0
@@ -282,10 +314,21 @@ def create_interactive_mcq_results(mcqs, user_answers, topic, time_taken=None):
     """
     
     for i, (mcq, ans) in enumerate(zip(mcqs, user_answers)):
-        # Result calculation and formatting logic
-        # Generate HTML for each question with color-coded feedback
+        correct_ans = mcq[5]
+        explanation = mcq[6]
+        if ans == correct_ans:
+            score += 1
+            result = f"<span style='color: green;'>Correct</span>"
+        else:
+            result = f"<span style='color: red;'>Incorrect (Correct: {correct_ans})</span>"
+        html_content += f"""
+        <div style="margin-bottom: 1rem;">
+            <h4>Question {i+1}: {mcq[0]}</h4>
+            <p>Your answer: {ans} - {result}</p>
+            <p>Explanation: {explanation}</p>
+        </div>
+        """
         
-    # Add final score
     percentage = round((score / len(mcqs)) * 100)
     html_content += f"""
         <div class="final-score" style="margin-top: 2rem; text-align: center;">
@@ -294,6 +337,7 @@ def create_interactive_mcq_results(mcqs, user_answers, topic, time_taken=None):
     """
     
     return html_content
+
 def create_pdf_summary(mcqs, user_answers, topic, time_taken=None):
     """Generate a PDF with MCQ test results and explanations."""
     score = 0
@@ -312,8 +356,26 @@ def create_pdf_summary(mcqs, user_answers, topic, time_taken=None):
         pdf.cell(0, 10, f"Time Taken: {time_taken}", ln=True)
     
     # Process each question and create formatted PDF content
+    for i, (mcq, ans) in enumerate(zip(mcqs, user_answers)):
+        correct_ans = mcq[5]
+        explanation = mcq[6]
+        if ans == correct_ans:
+            score += 1
+            result = "Correct"
+        else:
+            result = f"Incorrect (Correct: {correct_ans})"
+        pdf.set_font("Arial", "B", 12)
+        pdf.cell(0, 10, f"Question {i+1}: {mcq[0]}", ln=True)
+        pdf.set_font("Arial", "", 12)
+        pdf.cell(0, 10, f"Your answer: {ans} - {result}", ln=True)
+        pdf.multi_cell(0, 10, f"Explanation: {explanation}")
+    
+    percentage = round((score / len(mcqs)) * 100)
+    pdf.set_font("Arial", "B", 14)
+    pdf.cell(0, 10, f"Final Score: {score} / {len(mcqs)} ({percentage}%)", ln=True, align="C")
     
     return pdf.output(dest="S").encode("latin1")
+
 def render_chatbot():
     st.title("Educational Chatbot")
     
@@ -326,7 +388,6 @@ def render_chatbot():
         </div>
         """, unsafe_allow_html=True)
         
-        # Feature highlights
         col1, col2 = st.columns(2)
         with col1:
             st.markdown("""
@@ -335,22 +396,28 @@ def render_chatbot():
                 <p>Get detailed explanations on complex topics from math to literature.</p>
             </div>
             """, unsafe_allow_html=True)
-            
-            # Additional feature cards...
         
-        # Example questions
         st.markdown("### Try asking me:")
-        example_col1, example_col2, example_col3 = st.columns(3)
-        
         example_questions = [
             "Explain the theory of relativity simply",
             "What are the key themes in Hamlet?",
-            "How do I solve quadratic equations?",
-            # Additional examples...
+            "How do I solve quadratic equations?"
         ]
-# Display chat messages
-if st.session_state.chat_history:
-    for i, message in enumerate(st.session_state.chat_history):
+        for q in example_questions:
+            st.write(f"- {q}")
+    
+    # Chat input
+    user_input = st.text_input("Your question:")
+    if st.button("Send"):
+        if user_input:
+            st.session_state.chat_history.append({"role": "user", "content": user_input})
+            messages = [HumanMessage(content=user_input)]
+            with st.spinner("Thinking..."):
+                response = chat.invoke(messages)
+                st.session_state.chat_history.append({"role": "assistant", "content": response.content})
+    
+    # Display chat messages
+    for message in st.session_state.chat_history:
         if message["role"] == "user":
             st.markdown(f"""
             <div class="chat-message user">
@@ -365,12 +432,12 @@ if st.session_state.chat_history:
                 <div class="chat-content">{message["content"]}</div>
             </div>
             """, unsafe_allow_html=True)
+
 def generate_performance_chart(mcq_history):
     """Generate a performance chart based on MCQ history."""
     if not mcq_history:
         return None
     
-    # Extract data for visualization
     dates = []
     scores = []
     topics = []
@@ -381,23 +448,24 @@ def generate_performance_chart(mcq_history):
             scores.append((test_data['score'] / test_data['total']) * 100)
             topics.append(test_data['topic'])
     
-    # Create visualization
     df = pd.DataFrame({
         'Date': dates,
         'Score (%)': scores,
         'Topic': topics
     })
     
-    # Generate and return matplotlib figure
-    # ...
+    fig, ax = plt.subplots()
+    ax.plot(df['Date'], df['Score (%)'], marker='o')
+    ax.set_title("MCQ Performance Over Time")
+    ax.set_xlabel("Date")
+    ax.set_ylabel("Score (%)")
+    plt.xticks(rotation=45)
+    st.pyplot(fig)
+
 def main():
-    # Load custom CSS
     st.markdown(load_css(), unsafe_allow_html=True)
-    
-    # Render sidebar
     render_sidebar()
     
-    # Main content based on selected mode
     if st.session_state.get("mode_selection") == "MCQ Generator":
         render_mcq_generator()
     else:
