@@ -9,11 +9,11 @@ from io import BytesIO
 from fpdf import FPDF
 from langchain_groq import ChatGroq
 
-# Ensure langchain is installed (version >= 0.3.20)
+# Import required modules from langchain (ensure version >= 0.3.20 is installed)
 from langchain.schema import HumanMessage, SystemMessage
 from langchain.memory import ConversationBufferMemory
 
-# Allow asyncio to run in Streamlit
+# Allow asyncio in Streamlit
 nest_asyncio.apply()
 
 ###############################################################################
@@ -21,7 +21,7 @@ nest_asyncio.apply()
 ###############################################################################
 st.set_page_config(page_title="Adaptive MCQ & Chatbot", layout="wide")
 
-# Set your Groq API key (for demo; in production, use secure methods)
+# Set your Groq API key (for demo; use secure methods for production)
 os.environ["GROQ_API_KEY"] = "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"
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
@@ -34,6 +34,7 @@ chat = ChatGroq(temperature=0.7, model_name="llama3-70b-8192", groq_api_key=GROQ
 # UTILITY FUNCTIONS
 ###############################################################################
 def extract_text(file_obj, filename):
+    """Extract text from PDF, DOCX, or TXT."""
     ext = filename.rsplit('.', 1)[1].lower()
     if ext == "pdf":
         try:
@@ -59,6 +60,7 @@ def extract_text(file_obj, filename):
         return ""
 
 def create_pdf_summary(mcqs, user_answers):
+    """Generate a PDF summary of MCQ results."""
     score = 0
     pdf = FPDF()
     pdf.add_page()
@@ -67,17 +69,17 @@ def create_pdf_summary(mcqs, user_answers):
     pdf.ln(5)
     for i, (mcq, ans) in enumerate(zip(mcqs, user_answers)):
         question = mcq[0]
-        correct_letter = mcq[-2].strip().upper()
+        correct_letter = mcq[-2].strip().upper()  # second-to-last element: correct answer
         explanation = mcq[-1]
         selected = ans.strip().upper()
         if selected == correct_letter:
             score += 1
         pdf.multi_cell(0, 10, f"Q{i+1}: {question}")
-        if len(mcq) == 7:  # 4-option question
+        if len(mcq) == 7:
             letters = ["A", "B", "C", "D"]
             for idx, opt in enumerate(mcq[1:5]):
                 pdf.multi_cell(0, 10, f"{letters[idx]}) {opt}")
-        elif len(mcq) == 5:  # True/False question
+        elif len(mcq) == 5:
             pdf.multi_cell(0, 10, f"True) {mcq[1]}")
             pdf.multi_cell(0, 10, f"False) {mcq[2]}")
         pdf.multi_cell(0, 10, f"Your Answer: {selected} | Correct: {correct_letter}")
@@ -90,6 +92,7 @@ def create_pdf_summary(mcqs, user_answers):
     return pdf.output(dest="S").encode("latin1")
 
 def create_txt_summary(mcqs, user_answers):
+    """Generate a TXT summary of MCQ results."""
     lines = []
     score = 0
     for i, (mcq, ans) in enumerate(zip(mcqs, user_answers)):
@@ -114,6 +117,7 @@ def create_txt_summary(mcqs, user_answers):
     return "\n".join(lines)
 
 def query_chatbot(user_query):
+    """Query the chatbot using conversation memory."""
     system_prompt = """
 System Prompt: You are an expert educational assistant. Provide clear, concise, and helpful answers.
 """
@@ -130,6 +134,12 @@ System Prompt: You are an expert educational assistant. Provide clear, concise, 
         return f"Error: {str(e)}"
 
 async def async_generate_mcqs(doc_text, difficulty, num_questions):
+    """
+    Generate MCQs from the document text.
+    For 4-option questions, output [Question, A, B, C, D, Ans, Explanation] (7 elements).
+    For True/False questions, output [Question, True, False, Ans, Explanation] (5 elements).
+    Output only a Python list.
+    """
     system_prompt = f"""
 System Prompt: You are an advanced educational assessment generator for an enterprise-level adaptive learning system.
 Your tasks:
@@ -195,13 +205,14 @@ def chat_to_pdf(chat_history):
     return pdf.output(dest="S").encode("latin1")
 
 ###############################################################################
-# CUSTOM CSS FOR MODERN, COLORFUL UI
+# CUSTOM CSS FOR A MODERN, DARK, COLORFUL UI
 ###############################################################################
 st.markdown("""
 <style>
 body {
-    background: linear-gradient(135deg, #FF8C00, #FF0080);
+    background: #121212;
     color: #E0E0E0 !important;
+    font-family: 'Segoe UI', sans-serif;
 }
 .block-container {
     padding: 2rem;
@@ -230,7 +241,7 @@ h1, h2, h3, h4, h5, label {
     padding: 12px 18px;
     border-radius: 15px;
     margin-bottom: 10px;
-    max-width: 80%;
+    max-width: 90%;
     line-height: 1.5;
     font-size: 16px;
 }
@@ -239,21 +250,18 @@ h1, h2, h3, h4, h5, label {
     color: #fff;
     margin-left: auto;
     text-align: right;
-    border-top-right-radius: 0px;
 }
 .assistant-bubble {
     background-color: #333333;
     color: #E0E0E0;
     margin-right: auto;
     text-align: left;
-    border-top-left-radius: 0px;
 }
 .option-box {
     background: #3C3C3C;
-    margin: 5px 0;
     padding: 10px;
     border-radius: 6px;
-    transition: background 0.2s;
+    margin: 5px 0;
 }
 .option-box:hover {
     background: #505050;
@@ -277,7 +285,7 @@ for msg in st.session_state.chat_history:
 # MAIN APP
 ###############################################################################
 st.title("Adaptive MCQ Generator & Chatbot")
-st.write("A scalable AI system that transforms educational content into engaging MCQs with adjustable difficulty and provides a dynamic chatbot.")
+st.write("A scalable AI system that transforms educational content into engaging MCQs with adaptive difficulty and detailed performance insights.")
 
 mode_selection = st.sidebar.radio("Select Mode", ["MCQ Generator", "Chatbot"])
 
@@ -327,8 +335,9 @@ if mode_selection == "MCQ Generator":
                     st.markdown(f"### Question {idx+1} of {total}")
                     st.markdown(f"**{mcq[0]}**")
                     
+                    # Determine question type:
                     # 4-option: [Q, A, B, C, D, Ans, Explanation]
-                    # True/False: [Q, True, False, Ans, Explanation]
+                    # T/F: [Q, True, False, Ans, Explanation]
                     if len(mcq) == 7:
                         letters = ["A", "B", "C", "D"]
                         opts = [f"{letters[i]}) {mcq[i+1]}" for i in range(4)]
@@ -339,11 +348,13 @@ if mode_selection == "MCQ Generator":
                         st.session_state.current_q += 1
                         st.experimental_rerun()
                     
+                    # Ensure an answer placeholder
                     if st.session_state.user_answers[idx] == "":
                         st.session_state.user_answers[idx] = ""
                     
                     user_choice = st.radio("Select your answer:", opts, key=f"radio_{idx}")
                     
+                    # Submit Answer callback
                     def submit_callback():
                         selected_letter = user_choice.split(")")[0].strip().upper()
                         st.session_state.user_answers[idx] = selected_letter
@@ -358,10 +369,12 @@ if mode_selection == "MCQ Generator":
                     
                     st.button("Submit Answer", key=f"submit_{idx}", on_click=submit_callback)
                     
+                    # Next Question callback
                     def next_callback():
                         st.session_state.current_q += 1
                         st.experimental_rerun()
                     
+                    # Show "Next" or "Finish" button
                     if idx < total - 1:
                         st.button("Next Question", key=f"next_{idx}", on_click=next_callback)
                     else:
@@ -370,11 +383,11 @@ if mode_selection == "MCQ Generator":
                             st.experimental_rerun()
                         st.button("Finish Test", key="finish", on_click=finish_callback)
             
+            # Final summary
             if st.session_state.mcqs and st.session_state.done:
                 st.markdown("## Test Completed!")
                 total_q = len(st.session_state.mcqs)
                 st.write(f"**Final Score:** {st.session_state.score} / {total_q}")
-                
                 summary_txt = create_txt_summary(st.session_state.mcqs, st.session_state.user_answers)
                 st.text_area("Test Summary", summary_txt, height=300)
                 st.download_button("Download Summary as TXT", summary_txt, file_name="mcq_results.txt", mime="text/plain")
@@ -391,7 +404,7 @@ if mode_selection == "MCQ Generator":
 # ------------------- CHATBOT MODE -------------------
 else:
     st.write("## Educational Chatbot")
-    st.write("Ask or discuss anything about educational topics. Your chat history is shown in the sidebar.")
+    st.write("Ask any educational questions or discuss topics. Your chat history is displayed in the sidebar.")
     
     if "chat_history" not in st.session_state:
         st.session_state.chat_history = [{"role": "assistant", "content": "You are a helpful educational assistant."}]
@@ -414,7 +427,7 @@ else:
         else:
             st.markdown(f"<div class='chat-bubble user-bubble'>{msg['content']}</div>", unsafe_allow_html=True)
     
-    col1, col2, col3 = st.columns([1,1,1])
+    col1, col2, col3 = st.columns([1, 1, 1])
     with col1:
         if st.button("Download Chat as TXT"):
             txt_data = chat_to_txt(st.session_state.chat_history)
